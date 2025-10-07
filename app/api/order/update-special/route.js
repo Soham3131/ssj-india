@@ -36,8 +36,16 @@ export async function POST(request) {
 
     // Populate address and items minimally to match list response shape
     const address = updated.address ? await Address.findById(updated.address).lean() : null;
+    // Helper to extract productId from composite cart key
+    const extractProductId = (maybeComposite) => {
+      if (!maybeComposite || typeof maybeComposite !== 'string') return maybeComposite;
+      const parts = maybeComposite.split('::');
+      return parts[0];
+    };
+
     const populatedItems = await Promise.all((updated.items || []).map(async (item) => {
-      const product = item.product ? await Product.findById(item.product).lean() : null;
+      const pid = item.product ? extractProductId(item.product) : null;
+      const product = pid ? await Product.findById(pid).lean() : null;
       return {
         ...item,
         product: product ? { _id: product._id, name: product.name, image: product.image, offerPrice: product.offerPrice } : null

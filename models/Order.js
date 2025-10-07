@@ -18,6 +18,12 @@ const orderSchema = new mongoose.Schema({
             required: true 
         }
         ,
+        // Persist a snapshot of selected options (variant choices) for each item
+        selectedOptions: {
+            type: mongoose.Schema.Types.Mixed,
+            default: null
+        }
+        ,
         // Per-item tracking info (optional)
         trackingLink: {
             type: String,
@@ -74,6 +80,11 @@ const orderSchema = new mongoose.Schema({
     },
     refundReason: {
         type: String
+    },
+    // Optional invoice/bill URL provided by seller/admin (relative path under /public)
+    invoiceUrl: {
+        type: String,
+        default: ''
     },
     // Admin notes: allow multiple sellers to keep a private note per order
     adminNotes: [{

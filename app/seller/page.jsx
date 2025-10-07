@@ -15,23 +15,25 @@ const AddProduct = () => {
   const [description, setDescription] = useState('');
   
   // Brand, Category, Subcategory states
-  const [brand, setBrand] = useState('Boat');
+  const [brand, setBrand] = useState('');
   const [category, setCategory] = useState('');
   const [subcategory, setSubcategory] = useState('');
   
-  // Custom inputs
+  // Custom inputs (used when user selects "Other")
   const [customBrand, setCustomBrand] = useState('');
   const [customCategory, setCustomCategory] = useState('');
   const [customSubcategory, setCustomSubcategory] = useState('');
-  
-  const [price, setPrice] = useState('');
+
+  // only offerPrice is shown to simplify UI; price will be set equal to offerPrice on submit
   const [offerPrice, setOfferPrice] = useState('');
   const [stockQuantity, setStockQuantity] = useState('');
+  const [minBuy, setMinBuy] = useState(1);
+  // Variants state
+  // Each variant group: { name: 'Storage', options: [ { label: '64GB', priceDelta: 0, stock: 10 }, ... ] }
+  const [variants, setVariants] = useState([]);
+  const [colorsInput, setColorsInput] = useState('');
   
-  // Custom toggles
-  const [useCustomBrand, setUseCustomBrand] = useState(false);
-  const [useCustomCategory, setUseCustomCategory] = useState(false);
-  const [useCustomSubcategory, setUseCustomSubcategory] = useState(false);
+  // NOTE: replaced checkbox-based custom toggles by adding an "Other" option to selects/datalists
 
   // Updated hierarchical data structure with EXACT 10 categories
   const productHierarchy = {
@@ -159,7 +161,8 @@ const AddProduct = () => {
 
   // Get categories for selected brand
   const getCategories = () => {
-    if (useCustomBrand) return [];
+    // when brand is 'Other' or empty we don't have prefilled categories
+    if (!brand || brand === 'Other') return [];
     return [
       'Handsfree',
       'Earbuds', 
@@ -176,29 +179,35 @@ const AddProduct = () => {
 
   // Get subcategories for selected category
   const getSubcategories = () => {
-    if (useCustomCategory || !brand || !category) return [];
-    return productHierarchy[brand] && productHierarchy[brand][category] 
-      ? productHierarchy[brand][category] 
+    if (!brand || brand === 'Other' || !category || category === 'Other') return [];
+    return productHierarchy[brand] && productHierarchy[brand][category]
+      ? productHierarchy[brand][category]
       : [];
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // Validation
-    if (!stockQuantity || parseInt(stockQuantity) < 0) {
-      toast.error("Please enter a valid stock quantity");
-      return;
+    // Validation: stockQuantity is optional. If provided, validate it's non-negative and >= minBuy
+    if (stockQuantity !== null && stockQuantity !== undefined && stockQuantity !== '') {
+      if (isNaN(Number(stockQuantity)) || Number(stockQuantity) < 0) {
+        toast.error("Please enter a valid stock quantity");
+        return;
+      }
+      // Enforce stock >= minBuy on client side when stock provided
+      if (Number(stockQuantity) < Number(minBuy || 1)) {
+        toast.error(`Stock quantity (${stockQuantity}) cannot be less than Minimum Buy (${minBuy})`);
+        return;
+      }
     }
 
     console.log("=== 🚀 STARTING PRODUCT SUBMISSION ===");
     console.log("📦 Form Values:");
     console.log("Name:", name);
     console.log("Description:", description);
-    console.log("Brand:", useCustomBrand ? customBrand : brand);
-    console.log("Category:", useCustomCategory ? customCategory : category);
-    console.log("Subcategory:", useCustomSubcategory ? customSubcategory : subcategory);
-    console.log("Price:", price);
+  console.log("Brand:", brand === 'Other' ? customBrand || '' : brand);
+  console.log("Category:", category === 'Other' ? customCategory || '' : category);
+  console.log("Subcategory:", subcategory === 'Other' ? customSubcategory || '' : subcategory);
     console.log("Offer Price:", offerPrice);
     console.log("Stock Quantity:", stockQuantity);
     console.log("Image files count:", files.filter(Boolean).length);
@@ -209,14 +218,16 @@ const AddProduct = () => {
     // Append basic fields
     formData.append('name', name);
     formData.append('description', description);
-    formData.append('brand', useCustomBrand ? customBrand : brand);
-    formData.append('category', useCustomCategory ? customCategory : category);
-    formData.append('price', price);
+  formData.append('brand', brand === 'Other' ? customBrand : brand);
+  formData.append('category', category === 'Other' ? customCategory : category);
+  // keep a single price field: mirror offerPrice into price
+  formData.append('price', offerPrice);
     formData.append('offerPrice', offerPrice);
     formData.append('stockQuantity', stockQuantity);
+  formData.append('minBuy', minBuy);
 
     // Append subcategory only if provided
-    const finalSubcategory = useCustomSubcategory ? customSubcategory : subcategory;
+  const finalSubcategory = subcategory === 'Other' ? customSubcategory : subcategory;
     if (finalSubcategory && finalSubcategory.trim() !== '') {
       formData.append('subcategory', finalSubcategory);
       console.log("📋 Subcategory included:", finalSubcategory);
@@ -238,6 +249,18 @@ const AddProduct = () => {
         formData.append('videos', videos[i]);
         console.log("🎥 Added video:", videos[i].name, videos[i].type, videos[i].size);
       }
+    }
+
+    // Append variants as JSON if any
+    if (variants && variants.length > 0) {
+      formData.append('variants', JSON.stringify(variants));
+      console.log('🔀 Variants included:', JSON.stringify(variants));
+    }
+
+    // Append product-level colors if provided (comma-separated input)
+    if (colorsInput && colorsInput.trim() !== '') {
+      formData.append('colors', colorsInput.trim());
+      console.log('🎨 Colors included:', colorsInput.trim());
     }
 
     // Debug: Check formData contents
@@ -268,22 +291,20 @@ const AddProduct = () => {
         console.log("🎉 Product added successfully!");
         
         // Reset form
-        setFiles([]);
+    setFiles([]);
         setVideos([]);
         setName('');
         setDescription('');
-        setBrand('Boat');
+      setBrand('');
         setCategory('');
         setSubcategory('');
         setCustomBrand('');
         setCustomCategory('');
         setCustomSubcategory('');
-        setPrice('');
-        setOfferPrice('');
+    setOfferPrice('');
         setStockQuantity('');
-        setUseCustomBrand(false);
-        setUseCustomCategory(false);
-        setUseCustomSubcategory(false);
+  setMinBuy(1);
+  // previously cleared custom-toggle flags; no longer needed with 'Other' flow
       } else {
         console.error("❌ API Error:", data.message);
         toast.error(data.message);
@@ -342,9 +363,9 @@ const AddProduct = () => {
         
         {/* Product Images */}
         <div>
-          <p className="text-base font-medium">Product Images (Max 4)</p>
+        <p className="text-base font-medium">Product Images (Max 6)</p>
           <div className="flex flex-wrap items-center gap-3 mt-2">
-            {[...Array(4)].map((_, index) => (
+          {[...Array(6)].map((_, index) => (
               <div key={index} className="relative">
                 <label htmlFor={`image${index}`} className="cursor-pointer">
                   <input 
@@ -446,48 +467,37 @@ const AddProduct = () => {
           ></textarea>
         </div>
 
-        {/* Brand, Category, Subcategory Hierarchy */}
+        {/* Brand, Category, Subcategory Hierarchy (with 'Other' option) */}
         <div className="flex items-center gap-5 flex-wrap">
-          
+
           {/* Brand */}
           <div className="flex flex-col gap-1 w-48">
             <label className="text-base font-medium" htmlFor="brand">
               Brand <span className="text-red-500">*</span>
             </label>
-            <div className="flex gap-2">
-              <select
+            <div className="flex gap-2 items-center">
+              <input
                 id="brand"
+                list="brandList"
                 className="outline-none md:py-2.5 py-2 px-3 rounded border border-gray-500/40 flex-1"
                 onChange={(e) => handleBrandChange(e.target.value)}
                 value={brand}
-                disabled={useCustomBrand}
-                required
-              >
+                placeholder="Select or type brand"
+              />
+              <datalist id="brandList">
                 {Object.keys(productHierarchy).map((brandName) => (
-                  <option key={brandName} value={brandName}>{brandName}</option>
+                  <option key={brandName} value={brandName} />
                 ))}
-              </select>
-              <label className="flex items-center gap-1 text-sm">
-                <input 
-                  type="checkbox" 
-                  checked={useCustomBrand}
-                  onChange={(e) => {
-                    setUseCustomBrand(e.target.checked);
-                    setCategory('');
-                    setSubcategory('');
-                  }}
-                />
-                Custom
-              </label>
+                <option value="Other" />
+              </datalist>
             </div>
-            {useCustomBrand && (
+            {brand === 'Other' && (
               <input
                 type="text"
                 placeholder="Enter custom brand"
-                className="outline-none md:py-2.5 py-2 px-3 rounded border border-gray-500/40 mt-2"
+                className="outline-none md:py-2.5 py-2 px-3 rounded border border-gray-500/40 mt-2 w-full"
                 onChange={(e) => setCustomBrand(e.target.value)}
                 value={customBrand}
-                required
               />
             )}
           </div>
@@ -497,41 +507,30 @@ const AddProduct = () => {
             <label className="text-base font-medium" htmlFor="category">
               Category <span className="text-red-500">*</span>
             </label>
-            <div className="flex gap-2">
-              <select
+            <div className="flex gap-2 items-center">
+              <input
                 id="category"
+                list="categoryList"
                 className="outline-none md:py-2.5 py-2 px-3 rounded border border-gray-500/40 flex-1"
                 onChange={(e) => handleCategoryChange(e.target.value)}
                 value={category}
-                disabled={useCustomCategory || useCustomBrand}
-                required
-              >
-                <option value="">Select category</option>
+                placeholder={brand && brand !== 'Other' ? 'Select or type category' : 'Type category'}
+                disabled={!brand}
+              />
+              <datalist id="categoryList">
                 {getCategories().map((cat) => (
-                  <option key={cat} value={cat}>{cat}</option>
+                  <option key={cat} value={cat} />
                 ))}
-              </select>
-              <label className="flex items-center gap-1 text-sm">
-                <input 
-                  type="checkbox" 
-                  checked={useCustomCategory}
-                  onChange={(e) => {
-                    setUseCustomCategory(e.target.checked);
-                    setSubcategory('');
-                  }}
-                  disabled={useCustomBrand}
-                />
-                Custom
-              </label>
+                <option value="Other" />
+              </datalist>
             </div>
-            {useCustomCategory && (
+            {category === 'Other' && (
               <input
                 type="text"
                 placeholder="Enter custom category"
-                className="outline-none md:py-2.5 py-2 px-3 rounded border border-gray-500/40 mt-2"
+                className="outline-none md:py-2.5 py-2 px-3 rounded border border-gray-500/40 mt-2 w-full"
                 onChange={(e) => setCustomCategory(e.target.value)}
                 value={customCategory}
-                required
               />
             )}
           </div>
@@ -541,34 +540,28 @@ const AddProduct = () => {
             <label className="text-base font-medium" htmlFor="subcategory">
               Subcategory <span className="text-gray-500 text-sm">(Optional)</span>
             </label>
-            <div className="flex gap-2">
-              <select
+            <div className="flex gap-2 items-center">
+              <input
                 id="subcategory"
+                list="subcategoryList"
                 className="outline-none md:py-2.5 py-2 px-3 rounded border border-gray-500/40 flex-1"
                 onChange={(e) => setSubcategory(e.target.value)}
                 value={subcategory}
-                disabled={useCustomSubcategory || useCustomCategory || !category}
-              >
-                <option value="">Select subcategory (optional)</option>
+                placeholder={category && category !== 'Other' ? 'Select or type subcategory' : 'Type subcategory'}
+                disabled={!category || category === 'Other'}
+              />
+              <datalist id="subcategoryList">
                 {getSubcategories().map((subcat) => (
-                  <option key={subcat} value={subcat}>{subcat}</option>
+                  <option key={subcat} value={subcat} />
                 ))}
-              </select>
-              <label className="flex items-center gap-1 text-sm">
-                <input 
-                  type="checkbox" 
-                  checked={useCustomSubcategory}
-                  onChange={(e) => setUseCustomSubcategory(e.target.checked)}
-                  disabled={useCustomBrand || useCustomCategory}
-                />
-                Custom
-              </label>
+                <option value="Other" />
+              </datalist>
             </div>
-            {useCustomSubcategory && (
+            {subcategory === 'Other' && (
               <input
                 type="text"
-                placeholder="Enter custom subcategory (optional)"
-                className="outline-none md:py-2.5 py-2 px-3 rounded border border-gray-500/40 mt-2"
+                placeholder="Enter custom subcategory"
+                className="outline-none md:py-2.5 py-2 px-3 rounded border border-gray-500/40 mt-2 w-full"
                 onChange={(e) => setCustomSubcategory(e.target.value)}
                 value={customSubcategory}
               />
@@ -576,22 +569,9 @@ const AddProduct = () => {
           </div>
         </div>
 
-        {/* Price, Offer Price, and Stock Quantity */}
+  {/* Price, Offer Price, and Stock Quantity */}
         <div className="flex items-center gap-5 flex-wrap">
-          <div className="flex flex-col gap-1 w-32">
-            <label className="text-base font-medium" htmlFor="product-price">
-              Product Price <span className="text-red-500">*</span>
-            </label>
-            <input
-              id="product-price"
-              type="number"
-              placeholder="0"
-              className="outline-none md:py-2.5 py-2 px-3 rounded border border-gray-500/40"
-              onChange={(e) => setPrice(e.target.value)}
-              value={price}
-              required
-            />
-          </div>
+          {/* Note: only Offer Price is shown in the seller UI. The product 'price' field will mirror this value. */}
           <div className="flex flex-col gap-1 w-32">
             <label className="text-base font-medium" htmlFor="offer-price">
               Offer Price <span className="text-red-500">*</span>
@@ -608,18 +588,89 @@ const AddProduct = () => {
           </div>
           <div className="flex flex-col gap-1 w-32">
             <label className="text-base font-medium" htmlFor="stock-quantity">
-              Stock Quantity <span className="text-red-500">*</span>
+              Stock Quantity <span className="text-gray-500 text-sm">(optional)</span>
             </label>
             <input
               id="stock-quantity"
               type="number"
               min="0"
-              placeholder="0"
+              placeholder="leave empty for unlimited"
               className="outline-none md:py-2.5 py-2 px-3 rounded border border-gray-500/40"
               onChange={(e) => setStockQuantity(e.target.value)}
               value={stockQuantity}
+            />
+          </div>
+          <div className="flex flex-col gap-1 w-32">
+            <label className="text-base font-medium" htmlFor="min-buy">
+              Min Buy <span className="text-gray-500 text-sm">(minimum qty)</span>
+            </label>
+            <input
+              id="min-buy"
+              type="number"
+              min="1"
+              placeholder="1"
+              className="outline-none md:py-2.5 py-2 px-3 rounded border border-gray-500/40"
+              onChange={(e) => setMinBuy(e.target.value)}
+              value={minBuy}
               required
             />
+          </div>
+                  <div className="flex flex-col gap-1 w-full">
+                    <label className="text-base font-medium">Product Colors (optional)</label>
+                    <input type="text" placeholder="Comma separated color labels e.g. Red, Blue" value={colorsInput} onChange={(e) => setColorsInput(e.target.value)} className="w-full px-3 py-2 border rounded" />
+                    <p className="text-xs text-gray-500">You can provide colors as labels, or send JSON via API. Example: Red, Blue</p>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {(colorsInput || '').split(',').map(s => s.trim()).filter(Boolean).map((label, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <span className="w-6 h-6 rounded-full border" style={{ backgroundColor: label }} />
+                          <span className="text-xs text-gray-700">{label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+          {/* Variants UI */}
+          <div className="w-full mt-4">
+            <label className="text-base font-medium">Product Variants (optional)</label>
+            <div className="mt-2 space-y-3">
+              {variants.map((group, gi) => (
+                <div key={gi} className="p-3 border rounded">
+                  <div className="flex items-center justify-between">
+                    <input className="flex-1 outline-none px-2 py-1 border rounded" value={group.name} onChange={(e) => {
+                      const copy = [...variants]; copy[gi].name = e.target.value; setVariants(copy);
+                    }} placeholder="Variant group name e.g., Storage, Color" />
+                    <button type="button" className="ml-2 text-red-500" onClick={() => { setVariants(variants.filter((_, i) => i !== gi)) }}>Remove Group</button>
+                  </div>
+                  <div className="mt-2 space-y-2">
+                          {group.options.map((opt, oi) => (
+                      <div key={oi} className="flex items-center gap-3 p-2 border rounded-md">
+                        <div className="flex-1">
+                          <input className="w-full outline-none px-2 py-1 border rounded" value={opt.label} onChange={(e) => { const copy = [...variants]; copy[gi].options[oi].label = e.target.value; setVariants(copy); }} placeholder="Option label e.g., 64GB, Red" />
+                          <input className="w-full mt-2 outline-none px-2 py-1 border rounded" value={opt.description || ''} onChange={(e) => { const copy = [...variants]; copy[gi].options[oi].description = e.target.value; setVariants(copy); }} placeholder="Option description (optional)" />
+                          <p className="text-xs text-gray-500 mt-1">Colors (comma separated labels, e.g. Red,Maroon). Use color names to show swatches.</p>
+                          <input className="w-full mt-1 outline-none px-2 py-1 border rounded" value={opt.colors || ''} onChange={(e) => { const copy = [...variants]; copy[gi].options[oi].colors = e.target.value; setVariants(copy); }} placeholder="Colors e.g. Red,Blue" />
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <div className="flex flex-col">
+                            <label className="text-xs text-gray-600">Absolute price</label>
+                            <input className="w-28 outline-none px-2 py-1 border rounded" value={opt.price} onChange={(e) => { const copy = [...variants]; copy[gi].options[oi].price = e.target.value; setVariants(copy); }} placeholder="price (absolute)" />
+                          </div>
+                          <div className="flex flex-col items-end">
+                            <button type="button" className="text-red-500 mb-1" onClick={() => { const copy = [...variants]; copy[gi].options.splice(oi,1); setVariants(copy); }}>Remove</button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="mt-2">
+                      <button type="button" className="px-3 py-1 bg-gray-100 rounded" onClick={() => { const copy = [...variants]; copy[gi].options.push({ label: '', price: '', priceDelta: 0, stock: '', color: '' }); setVariants(copy); }}>Add Option</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <div>
+                <button type="button" className="px-3 py-1 bg-green-100 rounded" onClick={() => setVariants([...variants, { name: '', options: [] }])}>Add Variant Group</button>
+              </div>
+            </div>
           </div>
         </div>
 

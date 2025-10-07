@@ -12,6 +12,8 @@ const Orders = () => {
     const { currency, getToken, user } = useAppContext();
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [fetchError, setFetchError] = useState(null);
+    const [lastFetch, setLastFetch] = useState(null);
     const [searchTerm, setSearchTerm] = useState("");
     const [filterStatus, setFilterStatus] = useState("all");
     const [cancellingOrder, setCancellingOrder] = useState(null);
@@ -37,6 +39,9 @@ const Orders = () => {
     const [trackingModalOrder, setTrackingModalOrder] = useState(null);
     const [trackingModalProduct, setTrackingModalProduct] = useState(null);
     const [trackingInput, setTrackingInput] = useState('');
+    // Invoice modal state (used when seller uploads a PDF invoice for an order)
+    const [invoiceModalOrder, setInvoiceModalOrder] = useState(null);
+    const [invoiceFile, setInvoiceFile] = useState(null);
 
     // helper to read this seller's note from an order object
     const getSellerNoteForOrder = (order, sellerId) => {
@@ -79,6 +84,7 @@ const Orders = () => {
             setLoading(true);
             const token = await getToken();
             console.log("Fetching orders with token");
+            setFetchError(null);
 
             const { data } = await axios.get('/api/order/seller-orders', {
                 headers: { Authorization: `Bearer ${token}` },
@@ -89,8 +95,11 @@ const Orders = () => {
                 const ordersData = Array.isArray(data.orders) ? data.orders : [];
                 setOrders(ordersData);
                 generateSalesReport(ordersData);
+                setLastFetch(new Date().toISOString());
             } else {
-                toast.error(data.message || "Failed to fetch orders");
+                const msg = data.message || "Failed to fetch orders";
+                setFetchError(msg);
+                toast.error(msg);
                 setOrders([]);
                 setSalesReport({
                     totalSales: 0,
@@ -106,7 +115,9 @@ const Orders = () => {
                 status: error.response?.status,
                 data: error.response?.data
             });
-            toast.error(error.response?.data?.message || "Failed to fetch orders");
+            const msg = error.response?.data?.message || "Failed to fetch orders";
+            setFetchError(msg);
+            toast.error(msg);
             setOrders([]);
             setSalesReport({
                 totalSales: 0,
@@ -118,6 +129,26 @@ const Orders = () => {
         } finally {
             setLoading(false);
         }
+    };
+
+    // Replace or insert a full order object into local state (used after server updates)
+    // If the server didn't return the updated order, fallback to a full re-fetch.
+    const replaceOrderInState = async (returnedOrder) => {
+        if (!returnedOrder || !returnedOrder._id) {
+            await fetchSellerOrders();
+            return;
+        }
+        setOrders(prev => {
+            const oid = String(returnedOrder._id);
+            const found = prev.some(o => String(o._id) === oid);
+            const next = found ? prev.map(o => String(o._id) === oid ? returnedOrder : o) : [returnedOrder, ...prev];
+            try {
+                generateSalesReport(next);
+            } catch (e) {
+                // ignore errors in report generation
+            }
+            return next;
+        });
     };
 
     // Generate sales report from orders data
@@ -284,12 +315,13 @@ const Orders = () => {
                 }
             });
 
+            console.debug('updateOrderStatus response', data);
             if (data.success) {
-                const updatedOrders = orders.map(order => 
-                    order._id === orderId ? data.order : order
-                );
-                setOrders(updatedOrders);
-                generateSalesReport(updatedOrders);
+                if (data.order && data.order._id) {
+                    await replaceOrderInState(data.order);
+                } else {
+                    await fetchSellerOrders();
+                }
                 toast.success(`Order status updated to ${newStatus}`);
             } else {
                 toast.error(data.message || "Failed to update status");
@@ -313,12 +345,13 @@ const Orders = () => {
                 }
             });
 
+            console.debug('updatePaymentStatus response', data);
             if (data.success) {
-                const updatedOrders = orders.map(order => 
-                    order._id === orderId ? data.order : order
-                );
-                setOrders(updatedOrders);
-                generateSalesReport(updatedOrders);
+                if (data.order && data.order._id) {
+                    await replaceOrderInState(data.order);
+                } else {
+                    await fetchSellerOrders();
+                }
                 toast.success(`Payment status updated to ${newPaymentStatus}`);
             } else {
                 toast.error(data.message || "Failed to update payment status");
@@ -348,18 +381,19 @@ const Orders = () => {
                 }
             });
 
-            if (data.success) {
-                const updatedOrders = orders.map(order => 
-                    order._id === cancellingOrder ? data.order : order
-                );
-                setOrders(updatedOrders);
-                generateSalesReport(updatedOrders);
-                toast.success("Order cancelled successfully!");
-                setCancellingOrder(null);
-                setCancelReason("");
-            } else {
-                toast.error(data.message || "Failed to cancel order");
-            }
+                console.debug('handleCancelOrder response', data);
+                if (data.success) {
+                    if (data.order && data.order._id) {
+                        await replaceOrderInState(data.order);
+                    } else {
+                        await fetchSellerOrders();
+                    }
+                    toast.success("Order cancelled successfully!");
+                    setCancellingOrder(null);
+                    setCancelReason("");
+                } else {
+                    toast.error(data.message || "Failed to cancel order");
+                }
         } catch (error) {
             console.error("Error cancelling order:", error);
             toast.error(error.response?.data?.message || "Failed to cancel order");
@@ -385,18 +419,19 @@ const Orders = () => {
                 }
             });
 
-            if (data.success) {
-                const updatedOrders = orders.map(order => 
-                    order._id === refundingOrder ? data.order : order
-                );
-                setOrders(updatedOrders);
-                generateSalesReport(updatedOrders);
-                toast.success("Order refunded successfully!");
-                setRefundingOrder(null);
-                setRefundReason("");
-            } else {
-                toast.error(data.message || "Failed to refund order");
-            }
+                console.debug('handleRefund response', data);
+                if (data.success) {
+                    if (data.order && data.order._id) {
+                        await replaceOrderInState(data.order);
+                    } else {
+                        await fetchSellerOrders();
+                    }
+                    toast.success("Order refunded successfully!");
+                    setRefundingOrder(null);
+                    setRefundReason("");
+                } else {
+                    toast.error(data.message || "Failed to refund order");
+                }
         } catch (error) {
             console.error("Error refunding order:", error);
             toast.error(error.response?.data?.message || "Failed to refund order");
@@ -422,11 +457,12 @@ const Orders = () => {
     // sort newest first
     .sort((a, b) => new Date(b.date) - new Date(a.date));
 
+    // Ensure we attempt to load seller orders on mount. fetchSellerOrders handles auth errors
+    // gracefully (it will toast and leave `orders` empty if no token is available).
     useEffect(() => {
-        if (user) {
-            fetchSellerOrders();
-        }
-    }, [user]);
+        fetchSellerOrders();
+        // Note: we intentionally do not add `user` to deps so this runs once on mount.
+    }, []);
 
     // No local load/persist; admin notes are fetched as part of orders and saved via API
 
@@ -439,6 +475,15 @@ const Orders = () => {
     const formatOrderId = (order) => {
         if (!order?._id) return "N/A";
         return `#${order._id.slice(-8).toUpperCase()}`;
+    };
+
+    // Helper to detect color-like strings (hex, rgb(), or simple names)
+    const looksLikeColor = (v) => {
+        if (!v || typeof v !== 'string') return false;
+        const isHex = /^#([0-9A-F]{3}){1,2}$/i.test(v.trim());
+        const isRgb = /^rgb\(/i.test(v.trim());
+        const isName = /^[a-zA-Z]+$/.test(v.trim());
+        return isHex || isRgb || isName;
     };
 
     const formatDate = (date) => {
@@ -476,11 +521,83 @@ const Orders = () => {
         return item.product.image[0];
     };
 
+    // Resolve selectedOptions from item. Handles direct `item.selectedOptions` or legacy composite
+    // product identifiers like "<id>::<encodedSelectedOptions>" stored in item.product (string) or item.product._id
+    const resolveSelectedOptions = (item) => {
+        if (!item) return null;
+        if (item.selectedOptions) return item.selectedOptions;
+        const prod = item.product;
+        // If product field is a string like "id::%7B...%7D" or similar
+        const maybe = (typeof prod === 'string') ? prod : (prod && (prod._id || prod.id) ? String(prod._id || prod.id) : null);
+        if (maybe && typeof maybe === 'string' && maybe.includes('::')) {
+            try {
+                const parts = maybe.split('::');
+                const encoded = parts.slice(1).join('::');
+                const decoded = decodeURIComponent(encoded);
+                return JSON.parse(decoded);
+            } catch (e) {
+                return null;
+            }
+        }
+        return null;
+    };
+
+    // Safe price calculation using selectedOptions semantics (reused in seller view)
+    const calculateItemUnitPrice = (item) => {
+        const product = item.product || {};
+        let unit = Number(product.offerPrice || product.price || 0);
+        try {
+            const sel = resolveSelectedOptions(item);
+            const selected = Array.isArray(sel) ? sel : (sel && typeof sel === 'object' ? Object.values(sel) : (sel ? [sel] : []));
+            const absolutePrices = selected.map(o => (o && o.price !== undefined && o.price !== null ? Number(o.price) : null)).filter(v => v !== null && !Number.isNaN(v));
+            if (absolutePrices.length > 0) {
+                unit = Math.max(...absolutePrices);
+            } else {
+                unit = Number(product.offerPrice || product.price || 0);
+            }
+            selected.forEach((opt) => {
+                if (!opt) return;
+                const delta = Number(opt.priceDelta || 0) || 0;
+                unit += delta;
+            });
+        } catch (e) {
+            // ignore and fallback to product price
+        }
+        return Math.floor(unit * 100) / 100;
+    };
+
+    const calculateItemTotal = (item) => {
+        const qty = item.quantity || 0;
+        const unit = calculateItemUnitPrice(item);
+        return (qty * unit).toFixed(2);
+    };
+
+    const formatPrice = (v) => {
+        if (v === null || v === undefined) return '0';
+        const n = Number(v);
+        if (Number.isInteger(n)) return n.toString();
+        return n.toFixed(2);
+    };
+
+    const hasSelection = (sel) => {
+        if (!sel && sel !== 0) return false;
+        if (Array.isArray(sel)) return sel.length > 0;
+        if (typeof sel === 'object') return Object.keys(sel).length > 0;
+        // string/number -> considered a selection (e.g., color string)
+        return true;
+    }
+
     const formatShippingAddress = (address) => {
         if (!address) return "N/A";
         const { addressLine1, city, state, pincode, country } = address;
         const formattedAddress = `${addressLine1 || ""}, ${city || ""}, ${state || ""} ${pincode || ""}${country ? ", " + country : ""}`.trim();
         return formattedAddress || "N/A";
+    };
+
+    // Helper: when server returns a full order object after an update, merge it into client state
+    const upsertOrderFromServer = async (returnedOrder) => {
+        // delegate to the newer replaceOrderInState helper
+        await replaceOrderInState(returnedOrder);
     };
 
     return (
@@ -671,9 +788,28 @@ const Orders = () => {
                     <div className="space-y-4">
                         {filteredOrders.length === 0 ? (
                             <div className="text-center py-12">
-                                <p className="text-gray-500">
-                                    {orders.length === 0 ? "No orders found" : "No orders match your filters"}
-                                </p>
+                                {fetchError ? (
+                                    <div className="max-w-xl mx-auto bg-red-50 border border-red-200 rounded p-6">
+                                        <p className="text-red-800 font-semibold mb-2">Unable to load orders</p>
+                                        <p className="text-sm text-red-700 mb-3">{fetchError}</p>
+                                        <div className="flex justify-center gap-2">
+                                            <button onClick={() => fetchSellerOrders()} className="bg-blue-600 text-white px-4 py-2 rounded">Retry</button>
+                                            <button onClick={() => window.location.reload()} className="bg-gray-200 px-4 py-2 rounded">Reload Page</button>
+                                        </div>
+                                        {lastFetch && <p className="text-xs text-gray-500 mt-3">Last successful fetch: {lastFetch}</p>}
+                                        <p className="text-xs text-gray-500 mt-2">If you're not signed in, please sign in and retry.</p>
+                                    </div>
+                                ) : (
+                                    <div className="max-w-xl mx-auto bg-gray-50 border border-gray-200 rounded p-6">
+                                        <p className="text-gray-700 font-semibold mb-2">No orders found</p>
+                                        <p className="text-sm text-gray-600 mb-3">There are no orders for your store yet, or the server couldn't be reached.</p>
+                                        <div className="flex justify-center gap-2">
+                                            <button onClick={() => fetchSellerOrders()} className="bg-blue-600 text-white px-4 py-2 rounded">Retry</button>
+                                            <button onClick={() => window.location.reload()} className="bg-gray-200 px-4 py-2 rounded">Reload Page</button>
+                                        </div>
+                                        <p className="text-xs text-gray-500 mt-3">Tip: Check browser console and Network tab for failing API requests to <code>/api/order/seller-orders</code>.</p>
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             filteredOrders.map((order) => (
@@ -698,6 +834,12 @@ const Orders = () => {
                                             }`}>
                                                 {paymentOptions.find(s => s.value === order.paymentStatus)?.label || order.paymentStatus}
                                             </span>
+                                            {/* Upload/View invoice action */}
+                                            {!order.invoiceUrl ? (
+                                                <button onClick={() => setInvoiceModalOrder(order)} className="text-sm bg-[#54B1CE] text-white px-3 py-1 rounded">Upload Bill</button>
+                                            ) : (
+                                                <a href={order.invoiceUrl} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline">View invoice</a>
+                                            )}
                                             {order?.specialRequest && (
                                                 <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">Special Request</span>
                                             )}
@@ -710,7 +852,6 @@ const Orders = () => {
                                             <label className="block text-sm font-medium mb-2">Order Status</label>
                                             <div className="flex flex-wrap gap-2">
                                                 {statusOptions.map((status) => {
-                                                    console.log(`Rendering status button: ${status.value}`);
                                                     return (
                                                         <button
                                                             key={status.value}
@@ -795,34 +936,112 @@ const Orders = () => {
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                                         <div>
                                             <h4 className="font-medium mb-2">Products ({order.items?.length || 0})</h4>
-                                            {order.items?.map((item, index) => (
-                                                <div key={index} className="flex gap-2 mb-3 p-2 bg-gray-50 rounded">
-                                                    <Image
-                                                        src={getImageSrc(item)}
-                                                        alt={item.product?.name || "Product"}
-                                                        width={50}
-                                                        height={50}
-                                                        className="rounded object-cover"
-                                                        onError={(e) => {
-                                                            e.target.src = assets.box_icon;
-                                                        }}
-                                                    />
-                                                    <div className="flex-1">
-                                                        <p className="font-medium">{item.product?.name || "Product"}</p>
-                                                        <p className="text-gray-600">Qty: {item.quantity || 0}</p>
-                                                        <p className="text-gray-600">Price: {currency}{item.product?.offerPrice || 0}</p>
-                                                        <p className="font-semibold">Subtotal: {currency}{(item.quantity || 0) * (item.product?.offerPrice || 0)}</p>
-                                                        <div className="mt-2 flex items-center gap-2">
-                                                            {item.trackingLink ? (
-                                                                <a href={item.trackingLink} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline">View tracking</a>
-                                                            ) : (
-                                                                <span className="text-sm text-gray-500">Tracking: <strong>We will update the tracking soon</strong></span>
-                                                            )}
-                                                            {/* <button onClick={() => { setTrackingModalOrder(order); setTrackingModalProduct(item); setTrackingInput(item.trackingLink || ''); }} className="text-sm bg-[#54B1CE] text-white px-2 py-1 rounded">Add/Edit Tracking</button> */}
+                                            {order.items && order.items.length > 0 ? (
+                                                order.items.map((item, index) => {
+                                                    const sel = resolveSelectedOptions(item);
+                                                    return (
+                                                        <div key={index} className="flex flex-col sm:flex-row items-start gap-2 mb-3 p-2 bg-gray-50 rounded">
+                                                            <div className="w-full sm:w-16 sm:h-16 flex-shrink-0">
+                                                                <Image
+                                                                    src={getImageSrc(item)}
+                                                                    alt={item.product?.name || "Product"}
+                                                                    width={400}
+                                                                    height={400}
+                                                                    className="rounded object-contain w-full h-48 sm:h-16"
+                                                                    onError={(e) => { e.target.src = assets.box_icon; }}
+                                                                />
+                                                            </div>
+                                                            <div className="flex-1">
+                                                                <p className="font-medium">{item.product?.name || "Product"}</p>
+                                                                <p className="text-gray-600">Qty: {item.quantity || 0}</p>
+                                                                <p className="text-gray-600">Price: {currency}{formatPrice(calculateItemUnitPrice(item))}</p>
+                                                                <p className="font-semibold">Subtotal: {currency}{calculateItemTotal(item)}</p>
+                                                                {hasSelection(sel) ? (
+                                                                    <div className="mt-2 flex flex-col gap-2 text-sm">
+                                                                        <div className="flex flex-wrap gap-2">
+                                                                            {Array.isArray(sel) ? (
+                                                                                sel.map((s, si) => {
+                                                                                    const color = (s && s.color) || (typeof s === 'string' && looksLikeColor(s) ? s : null);
+                                                                                    const label = typeof s === 'string' ? s : (s?.label || s?.option || s?.value || JSON.stringify(s));
+                                                                                    return (
+                                                                                        <div key={si} className="flex items-center gap-3 text-gray-700 bg-white/0 p-1 rounded">
+                                                                                            {color ? (
+                                                                                                <span className="inline-block w-6 h-6 rounded-full border" style={{ backgroundColor: color }} title={(s && (s.colorLabel || s.color)) || (typeof s === 'string' ? s : '')} />
+                                                                                            ) : null}
+                                                                                            <div className="flex flex-col">
+                                                                                                <span className="font-medium text-sm">{label}</span>
+                                                                                                <div className="text-xs text-gray-500">
+                                                                                                    {s && s.price !== undefined && s.price !== null ? <span>Price: {currency}{Number(s.price).toFixed(2)}</span> : null}
+                                                                                                    {s && s.priceDelta ? <span className="ml-2">Δ {currency}{Number(s.priceDelta).toFixed(2)}</span> : null}
+                                                                                                </div>
+                                                                                                {s && s.description ? <div className="text-xs text-gray-500 mt-1">{s.description}</div> : null}
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    );
+                                                                                })
+                                                                            ) : (typeof sel === 'string' || typeof sel === 'number') ? (
+                                                                                (() => {
+                                                                                    const s = sel;
+                                                                                    const color = (typeof s === 'string' && looksLikeColor(s)) ? s : null;
+                                                                                    const label = String(s);
+                                                                                    return (
+                                                                                        <div key={`scalar-${index}`} className="flex items-center gap-3 text-gray-700 bg-white/0 p-1 rounded w-full">
+                                                                                            {color ? (
+                                                                                                <span className="inline-block w-6 h-6 rounded-full border" style={{ backgroundColor: color }} title={label} />
+                                                                                            ) : null}
+                                                                                            <div className="flex flex-col">
+                                                                                                <span className="font-medium text-sm">{label}</span>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    );
+                                                                                })()
+                                                                            ) : (
+                                                                                Object.entries(sel || {}).map(([group, s], si) => {
+                                                                                    const color = (s && s.color) || (typeof s === 'string' && looksLikeColor(s) ? s : null);
+                                                                                    const label = typeof s === 'string' ? s : (s?.label || s?.option || s?.value || JSON.stringify(s));
+                                                                                    return (
+                                                                                        <div key={si} className="flex items-center gap-3 text-gray-700 bg-white/0 p-1 rounded w-full">
+                                                                                            <div className="flex items-center gap-2 mr-2">
+                                                                                                <span className="text-xs text-gray-500 mr-1">{group === '_productColor' ? 'Color' : group}</span>
+                                                                                                {color ? (
+                                                                                                    <span className="inline-block w-6 h-6 rounded-full border" style={{ backgroundColor: color }} title={(s && (s.colorLabel || s.color)) || (typeof s === 'string' ? s : '')} />
+                                                                                                ) : null}
+                                                                                            </div>
+                                                                                            <div className="flex flex-col">
+                                                                                                <span className="font-medium text-sm">{label}</span>
+                                                                                                <div className="text-xs text-gray-500">
+                                                                                                    {s && s.price !== undefined && s.price !== null ? <span>Price: {currency}{Number(s.price).toFixed(2)}</span> : null}
+                                                                                                    {s && s.priceDelta ? <span className="ml-2">Δ {currency}{Number(s.priceDelta).toFixed(2)}</span> : null}
+                                                                                                </div>
+                                                                                                {s && s.description ? <div className="text-xs text-gray-500 mt-1">{s.description}</div> : null}
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    );
+                                                                        })
+                                                                    )}
+                                                                        </div>
+                                                                        <details className="mt-2 text-xs text-gray-500">
+                                                                            <summary className="cursor-pointer">View raw selection</summary>
+                                                                            <pre className="whitespace-pre-wrap break-words bg-gray-100 p-2 rounded mt-2 text-xs">{JSON.stringify(sel, null, 2)}</pre>
+                                                                        </details>
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="mt-2 text-sm text-gray-500">No variants selected for this item</div>
+                                                                )}
+                                                                <div className="mt-2 flex items-center gap-2">
+                                                                    {item.trackingLink ? (
+                                                                        <a href={item.trackingLink} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline">View tracking</a>
+                                                                    ) : (
+                                                                        <span className="text-sm text-gray-500"> <strong></strong></span>
+                                                                    )}
+                                                                </div>
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                </div>
-                                            )) || <p className="text-gray-500">No items</p>}
+                                                    );
+                                                })
+                                            ) : (
+                                                <p className="text-gray-500">No items</p>
+                                            )}
                                         </div>
 
                                         <div>
@@ -846,6 +1065,14 @@ const Orders = () => {
                                                 <p><strong>Shipping Address:</strong> {formatShippingAddress(order.customer?.shippingAddress)}</p>
                                                 {order.customer?.fullName === "N/A" && order.customer?.phoneNumber === "N/A" && formatShippingAddress(order.customer?.shippingAddress) === "N/A" && (
                                                     <p className="text-red-600 text-xs">Customer data unavailable. Contact support.</p>
+                                                )}
+                                            </div>
+                                            {/* Invoice area */}
+                                            <div className="mt-3">
+                                                {order.invoiceUrl ? (
+                                                    <a href={order.invoiceUrl} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline">View invoice</a>
+                                                ) : (
+                                                    <button onClick={() => setInvoiceModalOrder(order)} className="text-sm bg-gray-100 px-3 py-1 rounded">Upload invoice (PDF)</button>
                                                 )}
                                             </div>
                                         </div>
@@ -999,44 +1226,27 @@ const Orders = () => {
                                         headers: { Authorization: `Bearer ${token}` }
                                     });
 
-                                        if (data.success) {
-                                            // If API returned the updated order, use it. Otherwise re-fetch seller orders to pick up changes.
-                                            if (data.order) {
-                                                setOrders((prev) => prev.map(o => o._id === data.order._id ? data.order : o));
-                                            } else {
-                                                // re-fetch to ensure UI is in sync
-                                                await fetchSellerOrders();
-                                            }
-
-                                            // Show DB update debug if available
-                                            if (data.updateResult) {
-                                                const ur = data.updateResult;
-                                                const matched = ur.matchedCount ?? ur.n ?? ur.nMatched ?? 0;
-                                                const modified = ur.modifiedCount ?? ur.nModified ?? 0;
-                                                toast.success(`Tracking saved (matched: ${matched}, modified: ${modified})`);
-                                            } else {
-                                                toast.success('Tracking link saved');
-                                            }
-
-                                            // Quick client-side check: verify returned order contains the tracking link for this product
-                                            if (data.order) {
-                                                try {
-                                                    const pid = String(trackingModalProduct.product?._id || trackingModalProduct.product);
-                                                    const found = (data.order.items || []).find(it => {
-                                                        try { return String(it.product?._id || it.product) === pid; } catch (e) { return false; }
-                                                    });
-                                                    if (!found || !found.trackingLink) {
-                                                        toast.error('Warning: order returned but item has no trackingLink — re-check server logs');
-                                                    }
-                                                } catch (e) {
-                                                    // ignore
+                                            console.debug('saveTracking response', data);
+                                            if (data.success) {
+                                                if (data.order && data.order._id) {
+                                                    await replaceOrderInState(data.order);
+                                                } else {
+                                                    // No order returned; re-fetch to ensure consistency
+                                                    await fetchSellerOrders();
                                                 }
+
+                                                if (data.updateResult) {
+                                                    const ur = data.updateResult;
+                                                    const matched = ur.matchedCount ?? ur.n ?? ur.nMatched ?? 0;
+                                                    const modified = ur.modifiedCount ?? ur.nModified ?? 0;
+                                                    toast.success(`Tracking saved (matched: ${matched}, modified: ${modified})`);
+                                                } else {
+                                                    toast.success('Tracking link saved');
+                                                }
+                                            } else {
+                                                const debug = data.debug ? JSON.stringify(data.debug) : null;
+                                                toast.error((data.message || 'Failed to save tracking') + (debug ? ` - ${debug}` : ''));
                                             }
-                                        } else {
-                                            // If debug info is present, show it to the seller
-                                            const debug = data.debug ? JSON.stringify(data.debug) : null;
-                                            toast.error((data.message || 'Failed to save tracking') + (debug ? ` - ${debug}` : ''));
-                                        }
                                 } catch (err) {
                                     console.error('save tracking error', err);
                                     toast.error(err?.response?.data?.message || 'Failed to save tracking');
@@ -1048,6 +1258,48 @@ const Orders = () => {
                                 }
                             }} className="flex-1 bg-green-600 text-white py-2 rounded">Save</button>
                             <button onClick={() => { setTrackingModalOrder(null); setTrackingModalProduct(null); setTrackingInput(''); }} className="flex-1 bg-gray-300 py-2 rounded">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Invoice Upload Modal */}
+            {invoiceModalOrder && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg max-w-md w-full p-6">
+                        <h3 className="text-lg font-semibold mb-4">Upload Invoice (PDF)</h3>
+                        <input type="file" accept="application/pdf" onChange={(e) => setInvoiceFile(e.target.files?.[0] || null)} />
+                        <div className="flex gap-3 mt-4">
+                            <button onClick={async () => {
+                                if (!invoiceFile) { toast.error('Please choose a PDF file'); return; }
+                                try {
+                                    setLoading(true);
+                                    const token = await getToken();
+                                    // read file as base64
+                                    const b64 = await new Promise((res, rej) => {
+                                        const reader = new FileReader();
+                                        reader.onload = () => res(reader.result);
+                                        reader.onerror = (err) => rej(err);
+                                        reader.readAsDataURL(invoiceFile);
+                                    });
+                                    const { data } = await axios.post('/api/order/upload-invoice', { orderId: invoiceModalOrder._id, fileBase64: b64 }, { headers: { Authorization: `Bearer ${token}` } });
+                                    if (data.success) {
+                                        // update local order with returned URL
+                                        setOrders(prev => prev.map(o => o._id === invoiceModalOrder._id ? { ...o, invoiceUrl: data.url } : o));
+                                        toast.success('Invoice uploaded');
+                                    } else {
+                                        toast.error(data.message || 'Failed to upload invoice');
+                                    }
+                                } catch (err) {
+                                    console.error('upload invoice error', err);
+                                    toast.error(err?.response?.data?.message || 'Failed to upload invoice');
+                                } finally {
+                                    setInvoiceFile(null);
+                                    setInvoiceModalOrder(null);
+                                    setLoading(false);
+                                }
+                            }} className="flex-1 bg-green-600 text-white py-2 rounded">Upload</button>
+                            <button onClick={() => { setInvoiceFile(null); setInvoiceModalOrder(null); }} className="flex-1 bg-gray-300 py-2 rounded">Cancel</button>
                         </div>
                     </div>
                 </div>

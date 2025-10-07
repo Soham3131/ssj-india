@@ -44,11 +44,14 @@ const HomeProducts = ({ searchKeyword = "" }) => {
     setLastUpdate(Date.now());
   };
 
-  const filteredProducts = products.filter((p) =>
-    p.name.toLowerCase().includes(searchKeyword.toLowerCase())
-  );
+  const filteredProducts = products
+    .filter((p) => p.name.toLowerCase().includes(searchKeyword.toLowerCase()))
+    .slice() // copy
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
 
   console.log("🔍 Filtered products:", filteredProducts.length);
+
+  const displayProducts = filteredProducts.slice(0, 15);
 
   return (
     <div className="flex flex-col items-center pt-14 w-full">
@@ -63,8 +66,8 @@ const HomeProducts = ({ searchKeyword = "" }) => {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 mt-6 pb-14 w-full">
-        {filteredProducts.length > 0 ? (
-          filteredProducts.map((product) => (
+        {displayProducts.length > 0 ? (
+          displayProducts.map((product) => (
             <ProductCard key={`${product._id}-${lastUpdate}`} product={product} />
           ))
         ) : (
@@ -74,12 +77,14 @@ const HomeProducts = ({ searchKeyword = "" }) => {
         )}
       </div>
 
-      <button
-        onClick={() => router.push("/all-products")}
-        className="px-12 py-2.5 border rounded text-gray-500/70 hover:bg-slate-50/90 transition"
-      >
-        See more
-      </button>
+      {filteredProducts.length > 15 && (
+        <button
+          onClick={() => router.push("/all-products")}
+          className="px-12 py-2.5 border rounded text-gray-500/70 hover:bg-slate-50/90 transition"
+        >
+          See more
+        </button>
+      )}
     </div>
   );
 };

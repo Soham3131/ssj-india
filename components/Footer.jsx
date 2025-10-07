@@ -50,15 +50,15 @@ const Footer = () => {
           {/* Contact */}
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-3">Contact</h3>
-            <p className="text-sm text-gray-600">📞 +91-9289838929</p>
-            <p className="text-sm text-gray-600">✉️ business.ssjindia@gmail.com</p>
-            <p className="text-sm text-gray-600">📍 Delhi ,India</p>
+            <p className="text-sm text-gray-600">📞 +91-98765-43210</p>
+            <p className="text-sm text-gray-600">✉️ support@ssj.com</p>
+            <p className="text-sm text-gray-600">📍 Chandigarh, Punjab, India</p>
           </div>
         </div>
 
         {/* Bottom bar */}
         <div className="pt-8 text-center text-xs text-gray-500 border-t border-gray-200">
-          © 2025 SSJ India. All Rights Reserved.
+          © 2025 SSJ Wholesalers. All Rights Reserved.
         </div>
       </div>
 

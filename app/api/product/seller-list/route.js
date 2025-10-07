@@ -132,14 +132,85 @@ export async function PUT(request) {
             video: existingProduct.video
         }
 
-        // Update basic fields
-        const fields = ['name', 'description', 'price', 'offerPrice', 'category', 'brand', 'subcategory', 'stockQuantity']
+        // Update basic fields. For category/brand/subcategory only overwrite when a non-empty value is provided
+    // Note: handle stockQuantity separately so an empty string doesn't overwrite existing stock with 0
+    const fields = ['name', 'description', 'price', 'offerPrice', 'category', 'brand', 'subcategory']
+        const optionalTextFields = ['category', 'brand', 'subcategory']
         fields.forEach(field => {
             const value = formData.get(field)
             if (value !== null) {
-                updates[field] = field.includes('price') ? Number(value) : value
+                // For category/brand/subcategory: only set when non-empty (trimmed)
+                if (optionalTextFields.includes(field)) {
+                    if (typeof value === 'string' && value.trim() !== '') {
+                        updates[field] = value
+                    }
+                    // if empty string or whitespace, leave existing value unchanged
+                } else {
+                    updates[field] = field.includes('price') ? Number(value) : value
+                }
             }
         })
+        // Handle minBuy
+        const minBuyValue = formData.get('minBuy')
+        if (minBuyValue !== null) {
+            updates.minBuy = Number(minBuyValue) || 1
+        }
+
+        // If seller provided a number for stockQuantity, validate and update; if they provided clearStock flag, unset stockQuantity (make unlimited)
+        const stockValue = formData.get('stockQuantity')
+        const clearStock = formData.get('clearStock')
+        if (clearStock === 'true') {
+            // mark to remove stockQuantity from document
+            updates._unsetStock = true
+        } else if (stockValue !== null && stockValue !== '') {
+            const numericStock = Number(stockValue)
+            const numericMin = updates.minBuy || existingProduct.minBuy || 1
+            if (isNaN(numericStock) || numericStock < numericMin) {
+                return NextResponse.json({ success: false, message: `Stock quantity (${numericStock}) cannot be less than minimum buy quantity (${numericMin})` }, { status: 400 })
+            }
+            updates.stockQuantity = numericStock
+        }
+
+        // If name changed or slug missing, generate a new slug and ensure uniqueness
+        const generateSlug = (str) => {
+            return str
+                .toString()
+                .trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+        }
+
+        if (formData.get('name') !== null) {
+            const base = generateSlug(formData.get('name')) || `product-${Date.now()}`
+            let candidate = base
+            let exists = await Product.findOne({ slug: candidate, _id: { $ne: productId } }).lean()
+            let tries = 0
+            while (exists && tries < 5) {
+                const suffix = Math.random().toString(36).slice(2, 6)
+                candidate = `${base}-${suffix}`
+                exists = await Product.findOne({ slug: candidate, _id: { $ne: productId } }).lean()
+                tries++
+            }
+            if (exists) candidate = `${base}-${Date.now()}`
+            updates.slug = candidate
+        } else if (!existingProduct.slug) {
+            // Ensure existing products without slug get one
+            const base = generateSlug(existingProduct.name) || `product-${Date.now()}`
+            updates.slug = await (async (b) => {
+                let c = b
+                let e = await Product.findOne({ slug: c, _id: { $ne: productId } }).lean()
+                let t = 0
+                while (e && t < 5) {
+                    const s = Math.random().toString(36).slice(2, 6)
+                    c = `${b}-${s}`
+                    e = await Product.findOne({ slug: c, _id: { $ne: productId } }).lean()
+                    t++
+                }
+                if (e) c = `${b}-${Date.now()}`
+                return c
+            })(base)
+        }
 
         // Handle image deletions
         const imagesToDelete = formData.getAll('imagesToDelete')
@@ -230,11 +301,71 @@ export async function PUT(request) {
             }, { status: 400 })
         }
 
+        // Parse variants/colors from formData if provided
+        try {
+            const variantsRaw = formData.get('variants')
+            if (variantsRaw) {
+                try {
+                    const parsed = JSON.parse(variantsRaw)
+                    if (Array.isArray(parsed)) {
+                        // normalize options
+                        updates.variants = parsed.map(group => ({
+                            ...group,
+                            options: (group.options || []).map(opt => ({
+                                label: opt.label,
+                                description: opt.description || '',
+                                price: opt.price !== undefined && opt.price !== null && opt.price !== '' ? Number(opt.price) : undefined,
+                                priceDelta: opt.priceDelta !== undefined && opt.priceDelta !== null && opt.priceDelta !== '' ? Number(opt.priceDelta) : undefined,
+                                colors: typeof opt.colors === 'string' ? opt.colors.split(',').map(s => s.trim()).filter(Boolean) : (Array.isArray(opt.colors) ? opt.colors : []),
+                                color: (opt.colors && typeof opt.colors === 'string' ? (opt.colors.split(',')[0] || '') : (opt.color || ''))
+                            }))
+                        }))
+                    }
+                } catch (err) {
+                    // ignore invalid variants
+                }
+            }
+        } catch (e) {
+            // ignore invalid variants
+        }
+
+        try {
+            const colorsRaw = formData.get('colors')
+            if (colorsRaw) {
+                try {
+                    const parsedColors = JSON.parse(colorsRaw)
+                    if (Array.isArray(parsedColors)) updates.colors = parsedColors
+                } catch (e) {
+                    // fallback comma-separated
+                    updates.colors = colorsRaw.split(',').map(s => ({ label: s.trim(), color: '' })).filter(c => c.label)
+                }
+            }
+        } catch (e) {
+            // ignore
+        }
+
         // Update the product in database
+        // Apply update: if _unsetStock marker present, unset stockQuantity explicitly
+        const updateOps = { ...updates }
+        let finalOptions = { new: true, runValidators: true }
+        if (updateOps._unsetStock) {
+            delete updateOps._unsetStock
+            // Build a $unset update combined with other fields
+            const setFields = { ...updateOps }
+            const unsetFields = { stockQuantity: "" }
+            const mongoUpdate = { $set: setFields, $unset: unsetFields }
+            const updatedProduct = await Product.findByIdAndUpdate(productId, mongoUpdate, finalOptions)
+            return NextResponse.json({ 
+                success: true, 
+                message: 'Product updated successfully', 
+                product: updatedProduct 
+            })
+        }
+
         const updatedProduct = await Product.findByIdAndUpdate(
             productId,
             updates,
-            { new: true, runValidators: true }
+            finalOptions
         )
 
         return NextResponse.json({ 

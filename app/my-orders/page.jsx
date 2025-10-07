@@ -32,9 +32,11 @@ const MyOrders = () => {
         failed: "bg-red-100 text-red-800"
     };
 
-    const fetchOrders = async () => {
+    // fetchOrders(background=false): when background=true we avoid toggling the global `loading`
+    // This prevents the page from flashing the full Loading component during periodic polling.
+    const fetchOrders = async (background = false) => {
         try {
-            setLoading(true);
+            if (!background) setLoading(true);
             const token = await getToken();
             
             if (!token) {
@@ -56,7 +58,7 @@ const MyOrders = () => {
             console.error("Error fetching orders:", error);
             toast.error(error.response?.data?.message || "Failed to load orders");
         } finally {
-            setLoading(false);
+            if (!background) setLoading(false);
         }
     };
 
@@ -73,7 +75,7 @@ const MyOrders = () => {
         if (!user) return;
         let mounted = true;
         const interval = setInterval(() => {
-            if (mounted) fetchOrders();
+            if (mounted) fetchOrders(true); // background fetch to avoid visual refresh
         }, 15000); // every 15s
         return () => {
             mounted = false;
@@ -87,12 +89,40 @@ const MyOrders = () => {
         return status.charAt(0).toUpperCase() + status.slice(1);
     };
 
-    // Safe price calculation
+    // Safe price calculation using selectedOptions semantics
+    const calculateItemUnitPrice = (item) => {
+        const product = item.product || {};
+        let unit = Number(product.offerPrice || product.price || 0);
+        try {
+            const sel = item.selectedOptions || null;
+            const selected = Array.isArray(sel) ? sel : (sel && typeof sel === 'object' ? Object.values(sel) : []);
+            const absolutePrices = selected.map(o => (o && o.price !== undefined && o.price !== null ? Number(o.price) : null)).filter(v => v !== null && !Number.isNaN(v));
+            if (absolutePrices.length > 0) {
+                unit = Math.max(...absolutePrices);
+            }
+            selected.forEach((opt) => {
+                if (!opt) return;
+                const delta = Number(opt.priceDelta || 0) || 0;
+                unit += delta;
+            });
+        } catch (e) {
+            // ignore
+        }
+        return Math.floor(unit * 100) / 100;
+    }
+
     const calculateItemTotal = (item) => {
         const quantity = item.quantity || 0;
-        const price = item.product?.offerPrice || 0;
-        return (quantity * price).toFixed(2);
-    };
+        const unit = calculateItemUnitPrice(item);
+        return (quantity * unit).toFixed(2);
+    }
+
+    const formatPrice = (v) => {
+        if (v === null || v === undefined) return '0';
+        const n = Number(v);
+        if (Number.isInteger(n)) return n.toString();
+        return n.toFixed(2);
+    }
 
     // Helper: get tracking link from item with defensive fallbacks
     const getTrackingLink = (item) => {
@@ -136,6 +166,14 @@ const MyOrders = () => {
             });
         } catch (error) {
             return "Invalid date";
+        }
+
+        const hasSelection = (sel) => {
+            if (!sel && sel !== 0) return false;
+            if (Array.isArray(sel)) return sel.length > 0;
+            if (typeof sel === 'object') return Object.keys(sel).length > 0;
+            // string/number -> considered a selection (e.g., color string)
+            return true;
         }
     };
 
@@ -244,12 +282,49 @@ const MyOrders = () => {
                                                                 <p className="font-medium text-gray-900 truncate">
                                                                     {item.product?.name || "Product"}
                                                                 </p>
-                                                                <p className="text-sm text-gray-600">
-                                                                    Quantity: {item.quantity || 0} × {currency}{item.product?.offerPrice || 0}
-                                                                </p>
-                                                                <p className="text-sm font-semibold text-gray-900">
-                                                                    Total: {currency}{calculateItemTotal(item)}
-                                                                </p>
+                                                                    <p className="text-sm text-gray-600">
+                                                                        Quantity: {item.quantity || 0} × {currency}{formatPrice(calculateItemUnitPrice(item))}
+                                                                    </p>
+                                                                    <p className="text-sm font-semibold text-gray-900">
+                                                                        Total: {currency}{calculateItemTotal(item)}
+                                                                    </p>
+                                                                    {/* Render selected options if present (show label, price, delta, description, color) */}
+                                                                    {item.selectedOptions ? (
+                                                                        <div className="mt-2 flex flex-wrap gap-2 text-sm">
+                                                                            {Array.isArray(item.selectedOptions) ? (
+                                                                                item.selectedOptions.map((s, si) => (
+                                                                                    <div key={si} className="flex flex-col sm:flex-row items-start sm:items-center gap-2 text-gray-600 bg-white/0 p-1 rounded">
+                                                                                        <div className="flex items-center gap-2">
+                                                                                            {s && s.color ? <span className="inline-block w-5 h-5 rounded-full border" style={{ backgroundColor: s.color }} title={s.colorLabel || s.color} /> : null}
+                                                                                            <span className="font-medium">{s?.label || s?.option || s?.value || JSON.stringify(s)}</span>
+                                                                                        </div>
+                                                                                        <div className="text-xs text-gray-500">
+                                                                                            {s && s.price !== undefined && s.price !== null ? <span>Price: {currency}{Number(s.price).toFixed(2)}</span> : null}
+                                                                                            {s && s.priceDelta ? <span className="ml-2">Δ {currency}{Number(s.priceDelta).toFixed(2)}</span> : null}
+                                                                                            {s && s.description ? <div className="mt-1 text-xs text-gray-500">{s.description}</div> : null}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                ))
+                                                                            ) : (
+                                                                                Object.entries(item.selectedOptions).map(([group, s], si) => (
+                                                                                    <div key={si} className="flex flex-col sm:flex-row items-start sm:items-center gap-2 text-gray-600 bg-white/0 p-1 rounded">
+                                                                                        <div className="flex items-center gap-2">
+                                                                                            <span className="text-xs text-gray-500">{group === '_productColor' ? 'Color' : group}</span>
+                                                                                            {s && s.color ? <span className="inline-block w-5 h-5 rounded-full border" style={{ backgroundColor: s.color }} title={s.colorLabel || s.color} /> : null}
+                                                                                            <span className="font-medium">{typeof s === 'string' ? s : (s?.label || s?.option || s?.value || JSON.stringify(s))}</span>
+                                                                                        </div>
+                                                                                        <div className="text-xs text-gray-500">
+                                                                                            {s && s.price !== undefined && s.price !== null ? <span>Price: {currency}{Number(s.price).toFixed(2)}</span> : null}
+                                                                                            {s && s.priceDelta ? <span className="ml-2">Δ {currency}{Number(s.priceDelta).toFixed(2)}</span> : null}
+                                                                                            {s && s.description ? <div className="mt-1 text-xs text-gray-500">{s.description}</div> : null}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                ))
+                                                                                    )}
+                                                                                </div>
+                                                                            ) : (
+                                                                                <div className="mt-2 text-sm text-gray-500">No variants selected for this item</div>
+                                                                            )}
                                                                 {getTrackingLink(item) ? (
                                                                     <div className="text-sm mt-1">
                                                                         <a href={getTrackingLink(item)} target="_blank" rel="noreferrer" className="text-blue-600 underline">Track shipment</a>
@@ -258,7 +333,7 @@ const MyOrders = () => {
                                                                         ) : null}
                                                                     </div>
                                                                 ) : (
-                                                                    <p className="text-sm mt-1 text-gray-500">We will update the tracking soon</p>
+                                                                    <p className="text-sm mt-1 text-gray-500"></p>
                                                                 )}
                                                             </div>
                                                         </div>
@@ -357,6 +432,18 @@ const MyOrders = () => {
                                                     <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                                                         <h5 className="font-medium text-red-800 text-sm mb-1">Cancellation Reason</h5>
                                                         <p className="text-red-700 text-sm">{order.cancellationReason}</p>
+                                                    </div>
+                                                )}
+                                                {/* Invoice link if seller uploaded one, otherwise show friendly placeholder */}
+                                                {order.invoiceUrl ? (
+                                                    <div className="bg-white border border-gray-100 rounded-lg p-3">
+                                                        <h5 className="font-medium text-gray-900 text-sm mb-1">Invoice</h5>
+                                                        <a href={order.invoiceUrl} target="_blank" rel="noreferrer" className="text-blue-600 underline">View / Download invoice</a>
+                                                    </div>
+                                                ) : (
+                                                    <div className="bg-white border border-gray-100 rounded-lg p-3">
+                                                        <h5 className="font-medium text-gray-900 text-sm mb-1">Invoice</h5>
+                                                        <p className="text-sm text-gray-600">Bill will be updated soon</p>
                                                     </div>
                                                 )}
                                                 {/* Button under the order card to add/edit special request */}

@@ -26,7 +26,9 @@ const ProductList = () => {
     category: "",
     brand: "",
     subcategory: "",
-    stockQuantity: ""
+    stockQuantity: "",
+    clearStock: false,
+    minBuy: 1
   });
   const [editLoading, setEditLoading] = useState(false);
   
@@ -85,7 +87,10 @@ const ProductList = () => {
       category: product.category,
       brand: product.brand,
       subcategory: product.subcategory,
-      stockQuantity: product.stockQuantity || 0
+  stockQuantity: product.stockQuantity !== undefined && product.stockQuantity !== null ? product.stockQuantity : '',
+      clearStock: false,
+      minBuy: product.minBuy || 1,
+      variants: product.variants || []
     });
     setNewImages([]);
     setNewVideo(null);
@@ -107,7 +112,9 @@ const ProductList = () => {
       category: "",
       brand: "",
       subcategory: "",
-      stockQuantity: ""
+      stockQuantity: "",
+      clearStock: false,
+      minBuy: 1
     });
     setNewImages([]);
     setNewVideo(null);
@@ -185,18 +192,46 @@ const ProductList = () => {
     setUploadProgress(0);
 
     try {
+      // Client-side validation: ensure stock >= minBuy before upload
+      // If seller chose to 'Make unlimited' (clearStock) or left stock blank, skip this check
+      const numericMinBuy = Number(editForm.minBuy) || 1
+      const hasStockValue = !(editForm.clearStock) && editForm.stockQuantity !== undefined && editForm.stockQuantity !== null && editForm.stockQuantity !== '';
+      if (hasStockValue) {
+        const numericStock = Number(editForm.stockQuantity)
+        if (isNaN(numericStock) || numericStock < numericMinBuy) {
+          toast.error(`Stock quantity (${numericStock}) cannot be less than Minimum Buy (${numericMinBuy})`)
+          setEditLoading(false)
+          return
+        }
+      }
+
       const token = await getToken();
       const formData = new FormData();
 
       formData.append('productId', editingProduct._id);
       formData.append('name', editForm.name);
       formData.append('description', editForm.description);
-      formData.append('price', editForm.price);
-      formData.append('offerPrice', editForm.offerPrice);
-      formData.append('category', editForm.category);
-      formData.append('brand', editForm.brand);
-      formData.append('subcategory', editForm.subcategory);
-      formData.append('stockQuantity', editForm.stockQuantity);
+  // Use a single price field: mirror offerPrice into price
+  formData.append('price', editForm.offerPrice);
+  formData.append('offerPrice', editForm.offerPrice);
+  formData.append('category', editForm.category === 'Other' ? (editForm.customCategory || '') : editForm.category);
+  formData.append('brand', editForm.brand === 'Other' ? (editForm.customBrand || '') : editForm.brand);
+  formData.append('subcategory', editForm.subcategory === 'Other' ? (editForm.customSubcategory || '') : editForm.subcategory);
+      // Append stockQuantity only when present (empty string means leave unchanged)
+      if (editForm.stockQuantity !== undefined && editForm.stockQuantity !== null && editForm.stockQuantity !== '') {
+        formData.append('stockQuantity', editForm.stockQuantity);
+      }
+  formData.append('minBuy', editForm.minBuy);
+
+  // If seller marked 'Make unlimited', include a clearStock flag so server can unset stockQuantity
+  if (editForm.clearStock) {
+    formData.append('clearStock', 'true');
+  }
+
+      // Append variants JSON if present
+      if (editForm.variants && editForm.variants.length > 0) {
+        formData.append('variants', JSON.stringify(editForm.variants));
+      }
 
       imagesToDelete.forEach(imageUrl => {
         formData.append('imagesToDelete', imageUrl);
@@ -331,7 +366,10 @@ const ProductList = () => {
                         <div className="ml-4">
                           <div className="text-sm font-medium text-gray-900">{product.name}</div>
                           <div className="text-sm text-gray-500 md:hidden">
-                            {product.category} • {product.brand} • Stock: {product.stockQuantity}
+                            {product.category} • {product.brand}
+                            {product.stockQuantity !== undefined && product.stockQuantity !== null && product.stockQuantity !== '' && (
+                              <span> • Stock: {product.stockQuantity}</span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -344,20 +382,21 @@ const ProductList = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       <span className="font-semibold text-green-600">₹{product.offerPrice}</span>
-                      {product.price > product.offerPrice && (
-                        <span className="text-xs text-gray-500 line-through ml-2">₹{product.price}</span>
-                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <span className={`px-2 py-1 rounded-full text-xs ${
-                        product.stockQuantity > 10 
-                          ? 'bg-green-100 text-green-800' 
-                          : product.stockQuantity > 0 
-                            ? 'bg-yellow-100 text-yellow-800' 
-                            : 'bg-red-100 text-red-800'
-                      }`}>
-                        {product.stockQuantity > 0 ? `${product.stockQuantity} in stock` : 'Out of stock'}
-                      </span>
+                      {product.stockQuantity !== undefined && product.stockQuantity !== null && product.stockQuantity !== '' ? (
+                        <span className={`px-2 py-1 rounded-full text-xs ${
+                          product.stockQuantity > 10 
+                            ? 'bg-green-100 text-green-800' 
+                            : product.stockQuantity > 0 
+                              ? 'bg-yellow-100 text-yellow-800' 
+                              : 'bg-red-100 text-red-800'
+                        }`}>
+                          {product.stockQuantity > 0 ? `${product.stockQuantity} in stock` : 'Out of stock'}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-gray-500">&nbsp;</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex space-x-2">
@@ -440,12 +479,35 @@ const ProductList = () => {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Brand</label>
                     <input
-                      type="text"
+                      list="brandListEdit"
                       value={editForm.brand}
                       onChange={(e) => setEditForm({...editForm, brand: e.target.value})}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                      placeholder="Select or type brand"
                       required
                     />
+                    <datalist id="brandListEdit">
+                      {/* Populate from common list - lightweight duplicate is fine here */}
+                      <option value="JBL" />
+                      <option value="Sony" />
+                      <option value="Samsung" />
+                      <option value="Mi" />
+                      <option value="Apple" />
+                      <option value="OnePlus" />
+                      <option value="Realme" />
+                      <option value="Noise" />
+                      <option value="Boult" />
+                      <option value="Other" />
+                    </datalist>
+                    {editForm.brand === 'Other' && (
+                      <input
+                        type="text"
+                        value={editForm.customBrand || ''}
+                        onChange={(e) => setEditForm({...editForm, customBrand: e.target.value})}
+                        placeholder="Enter custom brand"
+                        className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-md"
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -464,47 +526,82 @@ const ProductList = () => {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
                     <input
-                      type="text"
+                      list="categoryListEdit"
                       value={editForm.category}
                       onChange={(e) => setEditForm({...editForm, category: e.target.value})}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                      placeholder="Select or type category"
                       required
                     />
+                    <datalist id="categoryListEdit">
+                      <option value="Handsfree" />
+                      <option value="Earbuds" />
+                      <option value="Mix Items" />
+                      <option value="Car Bluetooth" />
+                      <option value="OTG Cables" />
+                      <option value="Car Chargers" />
+                      <option value="Cables and Chargers" />
+                      <option value="Battery" />
+                      <option value="Selfie Sticks" />
+                      <option value="Car and Bike Stand" />
+                      <option value="Other" />
+                    </datalist>
+                    {editForm.category === 'Other' && (
+                      <input
+                        type="text"
+                        value={editForm.customCategory || ''}
+                        onChange={(e) => setEditForm({...editForm, customCategory: e.target.value})}
+                        placeholder="Enter custom category"
+                        className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-md"
+                      />
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Subcategory</label>
                     <input
-                      type="text"
+                      list="subcategoryListEdit"
                       value={editForm.subcategory}
                       onChange={(e) => setEditForm({...editForm, subcategory: e.target.value})}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                      placeholder="Select or type subcategory"
                       required
                     />
+                    <datalist id="subcategoryListEdit">
+                      {/* If category-specific subcategories exist, it's fine to keep a generic list here */}
+                      <option value="Other" />
+                    </datalist>
+                    {editForm.subcategory === 'Other' && (
+                      <input
+                        type="text"
+                        value={editForm.customSubcategory || ''}
+                        onChange={(e) => setEditForm({...editForm, customSubcategory: e.target.value})}
+                        placeholder="Enter custom subcategory"
+                        className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-md"
+                      />
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Stock Quantity</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={editForm.stockQuantity}
-                      onChange={(e) => setEditForm({...editForm, stockQuantity: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
-                      required
-                    />
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="0"
+                        value={editForm.stockQuantity}
+                        onChange={(e) => setEditForm({...editForm, stockQuantity: e.target.value, clearStock: false})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                      />
+                      <button
+                        type="button"
+                        className={`px-2 py-1 text-sm rounded border ${editForm.clearStock ? 'bg-green-100 border-green-300' : 'bg-white border-gray-200'}`}
+                        onClick={() => setEditForm({...editForm, stockQuantity: '', clearStock: true})}
+                      >
+                        Make unlimited
+                      </button>
+                    </div>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Original Price (₹)</label>
-                    <input
-                      type="number"
-                      value={editForm.price}
-                      onChange={(e) => setEditForm({...editForm, price: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
-                      required
-                    />
-                  </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Offer Price (₹)</label>
                     <input
@@ -514,6 +611,50 @@ const ProductList = () => {
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
                       required
                     />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Minimum Buy Quantity</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editForm.minBuy}
+                      onChange={(e) => setEditForm({...editForm, minBuy: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* Variants editor (lightweight) */}
+                <div className="mt-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Variants (optional)</label>
+                  <div className="space-y-3">
+                    {(editForm.variants || []).map((group, gi) => (
+                      <div key={gi} className="p-3 border rounded">
+                        <div className="flex items-center gap-2">
+                          <input className="flex-1 px-2 py-1 border rounded" value={group.name} onChange={(e) => { const c = {...editForm}; c.variants[gi].name = e.target.value; setEditForm(c); }} placeholder="Group name e.g., Storage" />
+                          <button type="button" className="text-red-500" onClick={() => { const c = {...editForm}; c.variants.splice(gi,1); setEditForm(c); }}>Remove Group</button>
+                        </div>
+                        <div className="mt-2 space-y-2">
+                          {group.options.map((opt, oi) => (
+                            <div key={oi} className="flex gap-2 items-center">
+                              <input className="flex-1 px-2 py-1 border rounded" value={opt.label} onChange={(e) => { const c = {...editForm}; c.variants[gi].options[oi].label = e.target.value; setEditForm(c); }} placeholder="Option label" />
+                              <input className="w-24 px-2 py-1 border rounded" value={opt.price} onChange={(e) => { const c = {...editForm}; c.variants[gi].options[oi].price = e.target.value; setEditForm(c); }} placeholder="price (absolute)" />
+                              <input className="w-28 px-2 py-1 border rounded" value={opt.priceDelta} onChange={(e) => { const c = {...editForm}; c.variants[gi].options[oi].priceDelta = e.target.value; setEditForm(c); }} placeholder="price delta" />
+                              <input className="w-40 px-2 py-1 border rounded" value={opt.description || ''} onChange={(e) => { const c = {...editForm}; c.variants[gi].options[oi].description = e.target.value; setEditForm(c); }} placeholder="description (optional)" />
+                              <input className="w-32 px-2 py-1 border rounded" value={opt.colors || ''} onChange={(e) => { const c = {...editForm}; c.variants[gi].options[oi].colors = e.target.value; setEditForm(c); }} placeholder="colors e.g. Red,Blue" />
+                              <button type="button" className="text-red-500" onClick={() => { const c = {...editForm}; c.variants[gi].options.splice(oi,1); setEditForm(c); }}>Remove</button>
+                            </div>
+                          ))}
+                          <div>
+                            <button type="button" className="px-2 py-1 bg-gray-100 rounded" onClick={() => { const c = {...editForm}; c.variants[gi].options.push({ label: '', price: '', priceDelta: 0, stock: '' }); setEditForm(c); }}>Add Option</button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    <div>
+                      <button type="button" className="px-3 py-1 bg-green-100 rounded" onClick={() => { const c = {...editForm}; c.variants = c.variants || []; c.variants.push({ name: '', options: [] }); setEditForm(c); }}>Add Variant Group</button>
+                    </div>
                   </div>
                 </div>
 
@@ -611,6 +752,17 @@ const ProductList = () => {
                           />
                         </label>
                       )}
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Product Colors Preview</label>
+                    <div className="flex gap-2">
+                      {(editForm.colors || []).map((c, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <span className="w-6 h-6 rounded-full border" style={{ backgroundColor: c.color || c.label }} />
+                          <span className="text-sm">{c.label}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>

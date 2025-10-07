@@ -15,6 +15,13 @@ export async function POST(request) {
         const body = await request.json();
     const { address, items, paymentMethod, specialRequest } = body;
 
+        // Helper to extract real productId from composite cart key like "<productId>::<encodedSelection>"
+        const extractProductId = (maybeComposite) => {
+            if (!maybeComposite || typeof maybeComposite !== 'string') return maybeComposite;
+            const parts = maybeComposite.split('::');
+            return parts[0];
+        };
+
         console.log("🔄 Creating order for user:", userId);
         console.log("📦 Order items:", items);
 
@@ -22,14 +29,16 @@ export async function POST(request) {
             return NextResponse.json({ success: false, message: 'Invalid data' });
         }
 
-        // ✅ DEBUG STOCK VALIDATION
+        // ✅ STOCK VALIDATION: enforce minBuy and treat blank/non-numeric option stock as unlimited
         for (const item of items) {
-            const product = await Product.findById(item.product);
+            const productId = extractProductId(item.product);
+            const product = await Product.findById(productId);
             console.log("🔍 Checking product:", {
                 productId: item.product,
                 productName: product?.name,
                 stockQuantity: product?.stockQuantity,
-                requestedQuantity: item.quantity
+                requestedQuantity: item.quantity,
+                minBuy: product?.minBuy
             });
 
             if (!product) {
@@ -39,14 +48,24 @@ export async function POST(request) {
                     message: `Product not found` 
                 });
             }
-            
-            // Check if stock is available
-            if (product.stockQuantity < item.quantity) {
-                console.log("❌ Not enough stock");
-                return NextResponse.json({ 
-                    success: false, 
-                    message: `Only ${product.stockQuantity} left for ${product.name}` 
-                });
+
+            // Enforce server-side minBuy
+            const minBuy = product.minBuy && Number(product.minBuy) > 0 ? Number(product.minBuy) : 1;
+            if (Number(item.quantity) < minBuy) {
+                return NextResponse.json({ success: false, message: `Minimum purchase for ${product.name} is ${minBuy}` });
+            }
+
+            // We only track product-level stock now. Variant options do not have stock.
+            const pStock = product.stockQuantity;
+            const pStockNum = Number(pStock);
+            if (pStock !== undefined && pStock !== null && pStock !== '' && Number.isFinite(pStockNum)) {
+                if (pStockNum < Number(item.quantity)) {
+                    console.log("❌ Not enough stock");
+                    return NextResponse.json({ 
+                        success: false, 
+                        message: `Only ${pStock} left for ${product.name}` 
+                    });
+                }
             }
         }
 
@@ -55,46 +74,98 @@ export async function POST(request) {
         // Calculate amount
         let totalAmount = 0;
         for (const item of items) {
-            const product = await Product.findById(item.product);
+            const productId = extractProductId(item.product);
+            const product = await Product.findById(productId);
             if (product) {
-                totalAmount += product.offerPrice * item.quantity;
+                // Determine unit price: consider selected options sent by client (item.selectedOptions)
+                let unitPrice = Number(product.offerPrice || product.price || 0);
+                try {
+                    const sel = item.selectedOptions || null;
+                    const selected = Array.isArray(sel) ? sel : (sel && typeof sel === 'object' ? Object.values(sel) : []);
+                    const absolutePrices = selected.map(o => (o && o.price !== undefined && o.price !== null ? Number(o.price) : null)).filter(v => v !== null && !Number.isNaN(v));
+                    if (absolutePrices.length > 0) {
+                        unitPrice = Math.max(...absolutePrices);
+                    }
+                    selected.forEach((opt) => {
+                        if (!opt) return;
+                        const delta = Number(opt.priceDelta || 0) || 0;
+                        unitPrice += delta;
+                    });
+                } catch (e) {
+                    // ignore
+                }
+                totalAmount += unitPrice * item.quantity;
             }
         }
 
-        const finalAmount = totalAmount + Math.floor(totalAmount * 0.02);
+    const finalAmount = totalAmount;
 
         // ✅ CREATE ORDER IN DATABASE
-        const order = await Order.create({
-            userId: userId,
-            items: items,
-            amount: finalAmount,
-            address: address,
-            specialRequest: specialRequest || '',
-            status: 'Order Placed',
-            paymentStatus: 'pending',
-            paymentMethod: 'cod',
-            date: new Date()
-        });
+            // Ensure we store real product IDs (not composite cart keys) in the order items
+            const itemsToStore = (items || []).map(it => {
+                // If client didn't include selectedOptions but product was sent as a composite key
+                // like "<productId>::<encodedSelection>", try to recover the selection here.
+                let sel = it.selectedOptions || null;
+                try {
+                    if (!sel && it.product && typeof it.product === 'string' && it.product.includes('::')) {
+                        const parts = it.product.split('::');
+                        if (parts.length > 1) {
+                            const encoded = parts.slice(1).join('::');
+                            const decoded = decodeURIComponent(encoded);
+                            sel = JSON.parse(decoded);
+                        }
+                    }
+                } catch (e) {
+                    // ignore parse errors and leave sel as null
+                    sel = sel || null;
+                }
+
+                return {
+                    ...it,
+                    product: extractProductId(it.product),
+                    // persist selectedOptions if present so order keeps a snapshot of chosen variants
+                    selectedOptions: sel || null
+                };
+            });
+
+            console.log('📦 itemsToStore (saving):', JSON.stringify(itemsToStore, null, 2));
+
+            const order = await Order.create({
+                userId: userId,
+                items: itemsToStore,
+                amount: finalAmount,
+                address: address,
+                specialRequest: specialRequest || '',
+                status: 'Order Placed',
+                paymentStatus: 'pending',
+                paymentMethod: 'cod',
+                date: new Date()
+            });
 
         console.log("✅ Order saved to DB with ID:", order._id);
 
         // ✅ UPDATE STOCK QUANTITIES
-        for (const item of items) {
-            const updatedProduct = await Product.findByIdAndUpdate(
-                item.product,
-                { $inc: { stockQuantity: -item.quantity } },
-                { new: true } // Return updated document
-            );
-            console.log("📦 Stock updated for:", {
-                product: item.product,
-                newStock: updatedProduct.stockQuantity
-            });
-        }
+            for (const item of itemsToStore) {
+                const product = await Product.findById(item.product);
+                if (!product) continue;
+
+                // We only track product-level stock now. Decrement product-level stock when present.
+                if (product.stockQuantity !== undefined && product.stockQuantity !== null && product.stockQuantity !== '' && Number.isFinite(Number(product.stockQuantity))) {
+                    const updatedProduct = await Product.findByIdAndUpdate(
+                        item.product,
+                        { $inc: { stockQuantity: -item.quantity } },
+                        { new: true }
+                    );
+                    console.log('📦 Product-level stock updated for:', { product: item.product, newStock: updatedProduct.stockQuantity });
+                } else {
+                    console.log('ℹ️ Product-level stock not tracked or unlimited; no decrement performed');
+                }
+            }
 
         // Send to Inngest
         await inngest.send({
             name: 'order/created',
-            data: {
+                data: {
                 userId,
                 address,
                 items,

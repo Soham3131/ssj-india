@@ -78,11 +78,15 @@ const AllProducts = () => {
 
         // Sort products
         switch (filters.sortBy) {
-            case 'latest':
-                if (filtered[0]?.createdAt) {
-                    filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-                }
+            case 'latest': {
+                // Sort by createdAt when available, otherwise fall back to ObjectId timestamp (newer first)
+                filtered.sort((a, b) => {
+                    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : (a._id ? parseInt(a._id.slice(0, 8), 16) * 1000 : 0);
+                    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : (b._id ? parseInt(b._id.slice(0, 8), 16) * 1000 : 0);
+                    return timeB - timeA;
+                });
                 break;
+            }
             case 'price-low':
                 filtered.sort((a, b) => a.price - b.price);
                 break;

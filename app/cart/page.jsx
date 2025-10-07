@@ -34,12 +34,53 @@ const Cart = () => {
                 </tr>
               </thead>
               <tbody>
-                {Object.keys(cartItems).map((itemId) => {
-                  const product = products.find(p => p._id === itemId);
-                  if (!product || cartItems[itemId] <= 0) return null;
+                {Object.keys(cartItems).map((rawKey) => {
+                  // rawKey may be 'productId' or 'productId::encodedSelection'
+                  const parts = rawKey.split('::');
+                  const productId = parts[0];
+                  const selectionEncoded = parts.length > 1 ? parts.slice(1).join('::') : null;
+                  const product = products.find(p => p._id === productId);
+                  if (!product || cartItems[rawKey] <= 0) return null;
+
+                  // Parse selection for display (best-effort)
+                  let selection = null;
+                  if (selectionEncoded) {
+                    try {
+                      selection = JSON.parse(decodeURIComponent(selectionEncoded));
+                    } catch (e) {
+                      selection = null;
+                    }
+                  }
+
+                  // Compute unit price using selectedOptions semantics
+                  const computeUnitPrice = (product, sel) => {
+                    let unit = Number(product?.offerPrice || product?.price || 0);
+                    try {
+                      const selected = Array.isArray(sel) ? sel : (sel && typeof sel === 'object' ? Object.values(sel) : []);
+                      const absolutePrices = selected.map(o => (o && o.price !== undefined && o.price !== null ? Number(o.price) : null)).filter(v => v !== null && !Number.isNaN(v));
+                      if (absolutePrices.length > 0) {
+                        unit = Math.max(...absolutePrices);
+                      }
+                      selected.forEach((opt) => {
+                        if (!opt) return;
+                        const delta = Number(opt.priceDelta || 0) || 0;
+                        unit += delta;
+                      });
+                    } catch (e) {
+                      // ignore and fallback to product price
+                    }
+                    return Math.floor(unit * 100) / 100;
+                  };
+                  const unitPrice = computeUnitPrice(product, selection);
+                  const formatPrice = (v) => {
+                    if (v === null || v === undefined) return '0';
+                    const n = Number(v);
+                    if (Number.isInteger(n)) return n.toString();
+                    return n.toFixed(2);
+                  };
 
                   return (
-                    <tr key={itemId} className="hover:bg-gray-50 transition">
+                    <tr key={rawKey} className="hover:bg-gray-50 transition">
                       <td className="flex items-center gap-4 py-4 md:px-4 px-1">
                         <div>
                           <div className="rounded-lg overflow-hidden bg-gray-100 p-2">
@@ -53,40 +94,53 @@ const Cart = () => {
                           </div>
                           <button
                             className="md:hidden text-xs text-[#54B1CE] mt-1"
-                            onClick={() => updateCartQuantity(product._id, 0)}
+                            onClick={() => updateCartQuantity(rawKey, 0)}
                           >
                             Remove
                           </button>
                         </div>
                         <div className="text-sm hidden md:block">
                           <p className="text-gray-700 font-medium">{product.name}</p>
+                          {selection ? (
+                            <div className="text-xs text-gray-500 mt-1">
+                              {Array.isArray(selection) ? (
+                                selection.map((s, idx) => (
+                                  <span key={idx} className="mr-2">{s.label || (s.option && s.option.label) || JSON.stringify(s)}</span>
+                                ))
+                              ) : (
+                                Object.entries(selection).map(([k, v]) => (
+                                  <span key={k} className="mr-2">{k}: {v.label || v}</span>
+                                ))
+                              )}
+                            </div>
+                          ) : null}
                           <button
                             className="text-xs text-[#54B1CE] mt-1 hover:underline"
-                            onClick={() => updateCartQuantity(product._id, 0)}
+                            onClick={() => updateCartQuantity(rawKey, 0)}
                           >
                             Remove
                           </button>
                         </div>
                       </td>
 
-                      <td className="py-4 md:px-4 px-1 text-gray-700 font-medium">${product.offerPrice}</td>
+                      <td className="py-4 md:px-4 px-1 text-gray-700 font-medium">₹{formatPrice(unitPrice)}</td>
 
                       <td className="py-4 md:px-4 px-1">
                         <div className="flex items-center md:gap-2 gap-1">
                           <button
-                            onClick={() => updateCartQuantity(product._id, cartItems[itemId] - 1)}
+                            onClick={() => updateCartQuantity(rawKey, cartItems[rawKey] - 1)}
                             className="bg-gray-100 p-1 rounded hover:bg-gray-200 transition"
                           >
                             <Image src={assets.decrease_arrow} alt="decrease_arrow" className="w-4 h-4" />
                           </button>
                           <input
                             type="number"
-                            value={cartItems[itemId]}
-                            onChange={e => updateCartQuantity(product._id, Number(e.target.value))}
+                            value={cartItems[rawKey]}
+                            onChange={e => updateCartQuantity(rawKey, Number(e.target.value))}
                             className="w-12 border rounded text-center appearance-none focus:outline-none focus:ring-1 focus:ring-[#54B1CE]"
                           />
                           <button
-                            onClick={() => addToCart(product._id)}
+                            onClick={() => addToCart(rawKey)}
                             className="bg-gray-100 p-1 rounded hover:bg-gray-200 transition"
                           >
                             <Image src={assets.increase_arrow} alt="increase_arrow" className="w-4 h-4" />
@@ -95,7 +149,7 @@ const Cart = () => {
                       </td>
 
                       <td className="py-4 md:px-4 px-1 text-gray-700 font-medium">
-                        ${(product.offerPrice * cartItems[itemId]).toFixed(2)}
+                        ₹{(unitPrice * cartItems[rawKey]).toFixed(2)}
                       </td>
                     </tr>
                   );

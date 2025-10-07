@@ -51,8 +51,23 @@ const OrderSummary = () => {
         return toast.error('Cart is empty');
       }
 
-      let cartItemsArray = Object.keys(cartItems).map((key) => ({product:key, quantity:cartItems[key]}));
+      let cartItemsArray = Object.keys(cartItems).map((key) => {
+        const parts = key.split('::');
+        let selectedOptions = null;
+        if (parts.length > 1) {
+          try {
+            const sel = JSON.parse(decodeURIComponent(parts.slice(1).join('::')));
+            selectedOptions = sel;
+          } catch (e) {
+            selectedOptions = null;
+          }
+        }
+        return { product: key, quantity: cartItems[key], selectedOptions };
+      });
       cartItemsArray = cartItemsArray.filter(item => item.quantity > 0);
+
+  // Debug: log the cart items array so we can verify selectedOptions are present
+  console.log('🧾 createOrder - cartItemsArray:', JSON.stringify(cartItemsArray, null, 2));
 
       if (cartItemsArray.length === 0) {
         return toast.error('Cart is empty');
@@ -102,7 +117,7 @@ const OrderSummary = () => {
   const createRazorpayOrder = async (token, cartItemsArray) => {
     setLoading(true);
     try {
-      const totalAmount = getCartAmount() + Math.floor(getCartAmount() * 0.02);
+  const totalAmount = getCartAmount();
       
       const orderResponse = await axios.post('/api/order/create',{
         address: selectedAddress._id,
@@ -294,13 +309,9 @@ const OrderSummary = () => {
             <p className="text-[#054b6d]">Shipping Fee</p>
             <p className="font-medium text-[#054b6d]">Free</p>
           </div>
-          <div className="flex justify-between">
-            <p className="text-[#054b6d]">Tax (2%)</p>
-            <p className="font-medium text-[#054b6d]">{currency}{Math.floor(getCartAmount() * 0.02)}</p>
-          </div>
           <div className="flex justify-between text-lg md:text-xl font-semibold border-t border-[#54B1CE]/20 pt-3">
             <p>Total</p>
-            <p>{currency}{getCartAmount() + Math.floor(getCartAmount() * 0.02)}</p>
+            <p>{currency}{getCartAmount()}</p>
           </div>
         </div>
       </div>
