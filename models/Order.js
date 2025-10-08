@@ -86,6 +86,11 @@ const orderSchema = new mongoose.Schema({
         type: String,
         default: ''
     },
+    // Optional cloud-hosted invoice URL (Cloudinary or other CDN)
+    invoiceUrlCloud: {
+        type: String,
+        default: ''
+    },
     // Admin notes: allow multiple sellers to keep a private note per order
     adminNotes: [{
         sellerId: { type: String },

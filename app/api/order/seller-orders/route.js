@@ -47,7 +47,32 @@ export async function GET(request) {
         console.log("Seller product IDs:", { count: sellerProductIdStrs.length, timestamp: new Date().toISOString() });
 
         // Fetch all orders (we'll filter/transform to seller items manually to handle composite keys)
-        const allOrders = await Order.find({}).populate({ path: 'address', model: 'Address', select: 'fullName phoneNumber pincode area city state' }).lean();
+        // Use lean() + a safe address resolution to avoid Mongoose trying to cast invalid address values to ObjectId
+        const rawOrders = await Order.find({}).lean();
+
+        // Build an address map only for valid ObjectId values to avoid CastError when some orders store non-ObjectId values
+        const addressIds = rawOrders.map(o => o.address).filter(Boolean).filter(id => mongoose.isValidObjectId(id)).map(id => id.toString());
+        const uniqueAddressIds = [...new Set(addressIds)];
+        let addressMap = {};
+        if (uniqueAddressIds.length > 0) {
+            const addresses = await Address.find({ _id: { $in: uniqueAddressIds } }).select('fullName phoneNumber pincode area city state').lean();
+            addressMap = addresses.reduce((acc, a) => { acc[a._id.toString()] = a; return acc; }, {});
+        }
+
+        // Attach address object when resolvable, otherwise keep existing value (could be inline object or a string)
+        const allOrders = rawOrders.map(o => {
+            let addr = null;
+            if (o.address) {
+                if (typeof o.address === 'string' && mongoose.isValidObjectId(o.address) && addressMap[o.address]) {
+                    addr = addressMap[o.address];
+                } else if (typeof o.address === 'object') {
+                    addr = o.address;
+                } else {
+                    addr = null;
+                }
+            }
+            return { ...o, address: addr };
+        });
 
         // Filter orders to those containing at least one item belonging to this seller (by product id)
         const sellerOrders = allOrders.filter(order => {
@@ -172,11 +197,23 @@ export async function PUT(request) {
             return NextResponse.json({ success: false, message: 'Order ID is required' }, { status: 400 });
         }
 
-        const order = await Order.findById(orderId).populate('items.product').populate({
-            path: 'address',
-            model: 'Address',
-            select: 'fullName phoneNumber pincode area city state'
-        });
+        // Load order with populated product info (items.product). Don't populate address here to avoid casting errors;
+        // we'll resolve address safely after fetching the order.
+        let order = await Order.findById(orderId).populate('items.product').lean();
+        if (!order) {
+            console.error(`Order not found: ${orderId}`, { timestamp: new Date().toISOString() });
+            return NextResponse.json({ success: false, message: 'Order not found' }, { status: 404 });
+        }
+
+        // Safely resolve address if it's a valid ObjectId
+        if (order.address && typeof order.address === 'string' && mongoose.isValidObjectId(order.address)) {
+            const addr = await Address.findById(order.address).select('fullName phoneNumber pincode area city state').lean();
+            order.address = addr || null;
+        } else if (order.address && typeof order.address === 'object') {
+            // already embedded/address object, keep as-is
+        } else {
+            order.address = null;
+        }
         if (!order) {
             console.error(`Order not found: ${orderId}`, { timestamp: new Date().toISOString() });
             return NextResponse.json({ success: false, message: 'Order not found' }, { status: 404 });
@@ -279,16 +316,21 @@ export async function PUT(request) {
         }
 
         // Re-fetch the order after any updates to ensure we return the latest state
-        const reloaded = await Order.findById(orderId).populate({
-            path: 'items.product',
-            select: '_id name image offerPrice userId'
-        }).populate({
-            path: 'address',
-            model: 'Address',
-            select: 'fullName phoneNumber pincode area city state'
-        }).lean();
+        // Re-fetch order products (populated) and safely resolve address like above
+        const reloadedProducts = await Order.findById(orderId).populate({ path: 'items.product', select: '_id name image offerPrice userId' }).lean();
+        let reloaded = reloadedProducts || null;
+        if (reloaded) {
+            if (reloaded.address && typeof reloaded.address === 'string' && mongoose.isValidObjectId(reloaded.address)) {
+                const addr = await Address.findById(reloaded.address).select('fullName phoneNumber pincode area city state').lean();
+                reloaded.address = addr || null;
+            } else if (reloaded.address && typeof reloaded.address === 'object') {
+                // keep
+            } else {
+                reloaded.address = null;
+            }
+        }
 
-        const responseOrder = {
+        const responseOrder = reloaded ? {
             ...reloaded,
             specialRequest: reloaded.specialRequest || '',
             customer: {
@@ -302,7 +344,7 @@ export async function PUT(request) {
                     country: ""
                 } : null
             }
-        };
+        } : null;
 
         // Include updateResult if present for debugging (e.g., when trackingLink was updated above)
         console.log('Order update completed', { orderId, updateResult: typeof updateResult !== 'undefined' ? updateResult : null, timestamp: new Date().toISOString() });
