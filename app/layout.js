@@ -10,7 +10,7 @@ export const metadata = {
   title: "SSJ India",
   description: "Wholesale Marketplace for accessories",
   icons: {
-    icon: "/ssj.ico",
+    icon: "/ssj.png",
     
   },
 };
