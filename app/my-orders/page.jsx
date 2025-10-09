@@ -177,6 +177,15 @@ const MyOrders = () => {
         }
     };
 
+    // Normalize a URL - if missing scheme, prepend https://
+    const normalizeUrl = (u) => {
+        if (!u) return u;
+        const s = String(u).trim();
+        if (!s) return s;
+        if (/^https?:\/\//i.test(s)) return s;
+        return `https://${s}`;
+    };
+
     return (
         <>
             <Navbar />
@@ -256,6 +265,11 @@ const MyOrders = () => {
                                                     <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">Special Request</span>
                                                 )}
                                             </div>
+                                            {order?.trackingLink && (
+                                                <div className="mt-2">
+                                                    <a href={normalizeUrl(order.trackingLink)} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline">Track order</a>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 
@@ -327,7 +341,7 @@ const MyOrders = () => {
                                                                             )}
                                                                 {getTrackingLink(item) ? (
                                                                     <div className="text-sm mt-1">
-                                                                        <a href={getTrackingLink(item)} target="_blank" rel="noreferrer" className="text-blue-600 underline">Track shipment</a>
+                                                                        <a href={normalizeUrl(getTrackingLink(item))} target="_blank" rel="noreferrer" className="text-blue-600 underline">Track shipment</a>
                                                                         {item.trackingUpdatedDate || (item.product && item.product.trackingUpdatedDate) ? (
                                                                             <div className="text-xs text-gray-500 mt-1">Updated {formatUpdatedDate(item.trackingUpdatedDate || (item.product && item.product.trackingUpdatedDate))}</div>
                                                                         ) : null}

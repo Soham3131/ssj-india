@@ -5,6 +5,7 @@ import authSeller from "@/lib/authSeller";
 import Order from "@/models/Order";
 import Product from "@/models/Product";
 import Address from "@/models/Address"; // Explicitly import Address
+import User from '@/models/User';
 import { currentUser } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import mongoose from 'mongoose';
@@ -59,16 +60,64 @@ export async function GET(request) {
             addressMap = addresses.reduce((acc, a) => { acc[a._id.toString()] = a; return acc; }, {});
         }
 
+        // Prefetch users (for fallback when address is missing or non-standard) to provide at least a customer name
+        const userIds = rawOrders.map(o => o.userId).filter(Boolean).map(id => id.toString());
+        const uniqueUserIds = [...new Set(userIds)];
+        let usersMap = {};
+        if (uniqueUserIds.length > 0) {
+            const users = await User.find({ _id: { $in: uniqueUserIds } }).select('name').lean();
+            usersMap = users.reduce((acc, u) => { acc[u._id.toString()] = u; return acc; }, {});
+        }
+
         // Attach address object when resolvable, otherwise keep existing value (could be inline object or a string)
         const allOrders = rawOrders.map(o => {
             let addr = null;
             if (o.address) {
-                if (typeof o.address === 'string' && mongoose.isValidObjectId(o.address) && addressMap[o.address]) {
-                    addr = addressMap[o.address];
-                } else if (typeof o.address === 'object') {
-                    addr = o.address;
-                } else {
-                    addr = null;
+                // If address is an ObjectId or string that looks like one, prefer the pre-fetched addressMap
+                try {
+                    if (mongoose.isValidObjectId(o.address)) {
+                        const key = String(o.address);
+                        if (addressMap[key]) {
+                            addr = addressMap[key];
+                        } else {
+                            // leave as null so fallback to user name or parsing occurs below
+                            addr = null;
+                        }
+                    } else if (typeof o.address === 'string') {
+                        // Try to parse JSON-encoded address strings (legacy behaviour)
+                        try {
+                            const parsed = JSON.parse(o.address);
+                            if (parsed && typeof parsed === 'object') {
+                                addr = parsed;
+                            } else {
+                                // fallback: store raw string as addressLine1
+                                addr = { fullName: '', phoneNumber: '', pincode: '', area: String(o.address), city: '', state: '' };
+                            }
+                        } catch (e) {
+                            // Not JSON, keep raw string as area/address line
+                            addr = { fullName: '', phoneNumber: '', pincode: '', area: String(o.address), city: '', state: '' };
+                        }
+                    } else if (typeof o.address === 'object') {
+                        // Embedded address object
+                        addr = o.address;
+                    } else {
+                        addr = null;
+                    }
+                } catch (e) {
+                    // Defensive: if mongoose.isValidObjectId throws, fall back to previous behaviour
+                    if (typeof o.address === 'object') addr = o.address;
+                    else if (typeof o.address === 'string') {
+                        try { addr = JSON.parse(o.address); } catch (e2) { addr = { area: String(o.address) }; }
+                    }
+                }
+            }
+
+            // If still no resolved address, fall back to user name (if available)
+            if (!addr && o.userId && usersMap) {
+                const key = String(o.userId);
+                if (usersMap[key]) {
+                    const u = usersMap[key];
+                    addr = { fullName: u.name || '', phoneNumber: '', pincode: '', area: '', city: '', state: '' };
                 }
             }
             return { ...o, address: addr };
@@ -131,27 +180,119 @@ export async function GET(request) {
             });
         });
 
-        // Map orders to include customer object
-        const ordersWithCustomer = sellerOrders.map(order => {
+        // Map orders to include a robust customer object
+        const ordersWithCustomer = await Promise.all(sellerOrders.map(async (order) => {
+            // Ensure address is fully resolved; if not, attempt a direct DB lookup as a fallback
+            try {
+                if (order.address && typeof order.address !== 'object' && mongoose.isValidObjectId(order.address)) {
+                    const a = await Address.findById(order.address).select('fullName phoneNumber pincode area city state').lean();
+                    if (a) order.address = a;
+                }
+            } catch (e) {
+                // ignore lookup errors - we'll continue with existing value
+            }
+
             console.log(`Order ${order._id} address:`, JSON.stringify(order.address || {}, null, 2));
+
+            // Priority for customer info:
+            // 1) order.customer (if provided by other parts of system)
+            // 2) resolved order.address (Address doc or embedded object)
+            // 3) parsed legacy address string
+            // 4) fallback to User.name when available
+
+            let fullName = null;
+            let phoneNumber = null;
+            let shippingAddress = null;
+
+            // 1) try order.customer first
+            if (order.customer && (order.customer.fullName || order.customer.phoneNumber || order.customer.shippingAddress)) {
+                fullName = order.customer.fullName || null;
+                phoneNumber = order.customer.phoneNumber || null;
+                if (order.customer.shippingAddress) {
+                    shippingAddress = {
+                        addressLine1: order.customer.shippingAddress.addressLine1 || '',
+                        city: order.customer.shippingAddress.city || '',
+                        state: order.customer.shippingAddress.state || '',
+                        pincode: order.customer.shippingAddress.pincode || '',
+                        country: order.customer.shippingAddress.country || ''
+                    };
+                }
+            }
+
+            // 2) if missing, use resolved order.address
+            if ((!fullName || !phoneNumber) && order.address) {
+                const a = order.address;
+                if (!fullName && a.fullName) fullName = a.fullName;
+                if (!phoneNumber && a.phoneNumber) phoneNumber = a.phoneNumber;
+                if (!shippingAddress) {
+                    shippingAddress = {
+                        addressLine1: a.area || a.addressLine1 || '',
+                        city: a.city || '',
+                        state: a.state || '',
+                        pincode: a.pincode || a.pin || '',
+                        country: a.country || ''
+                    };
+                }
+            }
+
+            // 3) Try parse legacy string address stored directly on order.address
+            if ((!fullName || !phoneNumber) && order.address && typeof order.address === 'string') {
+                try {
+                    const parsed = JSON.parse(order.address);
+                    if (parsed && typeof parsed === 'object') {
+                        if (!fullName && parsed.fullName) fullName = parsed.fullName;
+                        if (!phoneNumber && parsed.phoneNumber) phoneNumber = parsed.phoneNumber;
+                        if (!shippingAddress) {
+                            shippingAddress = {
+                                addressLine1: parsed.area || parsed.addressLine1 || '',
+                                city: parsed.city || '',
+                                state: parsed.state || '',
+                                pincode: parsed.pincode || parsed.pin || '',
+                                country: parsed.country || ''
+                            };
+                        }
+                    }
+                } catch (e) {
+                    // not JSON - leave for fallback
+                }
+            }
+
+            // 4) fallback: use User.name (from prefetched usersMap) if we have a userId and no fullName yet
+            if (!fullName && order.userId && usersMap) {
+                const key = String(order.userId);
+                if (usersMap[key]) fullName = usersMap[key].name || null;
+            }
+
+            // 5) as a last resort, attempt a direct DB lookup for the user and use name or email
+            if (!fullName && order.userId) {
+                try {
+                    const u = await User.findById(order.userId).select('name email').lean();
+                    if (u) {
+                        fullName = u.name || u.email || null;
+                    }
+                } catch (e) {
+                    // ignore lookup errors
+                }
+            }
+
+            // Final defensive defaults
+            const customerObj = {
+                // prefer null for missing values so client fallbacks (getDisplayCustomer) can decide
+                fullName: fullName || null,
+                phoneNumber: phoneNumber || null,
+                shippingAddress: shippingAddress || null
+            };
+
+            console.log(`Computed customer for order ${order._id}:`, customerObj);
+
             return {
                 ...order,
                 specialRequest: order.specialRequest || '',
-                customer: {
-                    fullName: order.address?.fullName || "N/A",
-                    phoneNumber: order.address?.phoneNumber || "N/A",
-                    shippingAddress: order.address ? {
-                        addressLine1: order.address.area || "",
-                        city: order.address.city || "",
-                        state: order.address.state || "",
-                        pincode: order.address.pincode || "",
-                        country: ""
-                    } : null
-                }
+                customer: customerObj
             };
-        });
+        }));
 
-        console.log("Orders with customer data:", { count: ordersWithCustomer.length, timestamp: new Date().toISOString() });
+        console.log("Orders with customer data:", { count: ordersWithCustomer.length, sample: ordersWithCustomer[0] || null, timestamp: new Date().toISOString() });
 
         return NextResponse.json({ success: true, orders: ordersWithCustomer });
 
@@ -186,8 +327,8 @@ export async function PUT(request) {
 
         await connectDB();
 
-        const body = await request.json();
-        const { orderId, status, paymentStatus, cancellationReason, refundReason, trackingLink, productId } = body;
+    const body = await request.json();
+    const { orderId, status, paymentStatus, cancellationReason, refundReason, trackingLink, productId, orderTrackingLink } = body;
 
         // Ensure we have seller product ids available in PUT as well
         const sellerProductIdStrs = await getSellerProductIdStrs(user.id);
@@ -240,7 +381,8 @@ export async function PUT(request) {
         if (refundReason) updateData.refundReason = refundReason;
 
         // If tracking info provided, update the matching item for this seller
-        if (trackingLink && productId) {
+    // Per-item tracking (existing behavior)
+    if (trackingLink && productId) {
             // accept composite productId (from client) and extract real id
             const cleanedProductId = extractProductId(productId);
             // ensure the product belongs to this seller
@@ -315,36 +457,135 @@ export async function PUT(request) {
             return NextResponse.json({ success: false, message: 'Failed to apply updates' }, { status: 500 });
         }
 
+        // If an order-level tracking link was provided, save it
+        if (orderTrackingLink) {
+            try {
+                const r = await Order.updateOne({ _id: orderId }, { $set: { trackingLink: orderTrackingLink } });
+                updateResult = updateResult || r;
+            } catch (e) {
+                console.error('Failed to save order-level tracking link', { error: e, orderId, orderTrackingLink });
+                return NextResponse.json({ success: false, message: 'Failed to save order tracking link' }, { status: 500 });
+            }
+        }
+
         // Re-fetch the order after any updates to ensure we return the latest state
         // Re-fetch order products (populated) and safely resolve address like above
         const reloadedProducts = await Order.findById(orderId).populate({ path: 'items.product', select: '_id name image offerPrice userId' }).lean();
         let reloaded = reloadedProducts || null;
         if (reloaded) {
-            if (reloaded.address && typeof reloaded.address === 'string' && mongoose.isValidObjectId(reloaded.address)) {
-                const addr = await Address.findById(reloaded.address).select('fullName phoneNumber pincode area city state').lean();
-                reloaded.address = addr || null;
+            if (reloaded.address && typeof reloaded.address === 'string') {
+                if (mongoose.isValidObjectId(reloaded.address)) {
+                    const addr = await Address.findById(reloaded.address).select('fullName phoneNumber pincode area city state').lean();
+                    reloaded.address = addr || null;
+                } else {
+                    // Try parse JSON-encoded address or keep raw string
+                    try {
+                        const parsed = JSON.parse(reloaded.address);
+                        reloaded.address = parsed && typeof parsed === 'object' ? parsed : { fullName: '', phoneNumber: '', pincode: '', area: String(reloaded.address), city: '', state: '' };
+                    } catch (e) {
+                        reloaded.address = { fullName: '', phoneNumber: '', pincode: '', area: String(reloaded.address), city: '', state: '' };
+                    }
+                }
             } else if (reloaded.address && typeof reloaded.address === 'object') {
                 // keep
             } else {
-                reloaded.address = null;
+                // fallback to user name if possible
+                if (reloaded.userId) {
+                    try {
+                        const u = await User.findById(reloaded.userId).select('name').lean();
+                        reloaded.address = u ? { fullName: u.name || '', phoneNumber: '', pincode: '', area: '', city: '', state: '' } : null;
+                    } catch (e) {
+                        reloaded.address = null;
+                    }
+                } else {
+                    reloaded.address = null;
+                }
             }
         }
 
-        const responseOrder = reloaded ? {
-            ...reloaded,
-            specialRequest: reloaded.specialRequest || '',
-            customer: {
-                fullName: reloaded.address?.fullName || "N/A",
-                phoneNumber: reloaded.address?.phoneNumber || "N/A",
-                shippingAddress: reloaded.address ? {
-                    addressLine1: reloaded.address.area || "",
-                    city: reloaded.address.city || "",
-                    state: reloaded.address.state || "",
-                    pincode: reloaded.address.pincode || "",
-                    country: ""
-                } : null
+        // Build a robust customer object for the returned order
+        let responseOrder = null;
+        if (reloaded) {
+            let fullName = null;
+            let phoneNumber = null;
+            let shippingAddress = null;
+
+            if (reloaded.customer && (reloaded.customer.fullName || reloaded.customer.phoneNumber || reloaded.customer.shippingAddress)) {
+                fullName = reloaded.customer.fullName || null;
+                phoneNumber = reloaded.customer.phoneNumber || null;
+                if (reloaded.customer.shippingAddress) {
+                    shippingAddress = {
+                        addressLine1: reloaded.customer.shippingAddress.addressLine1 || '',
+                        city: reloaded.customer.shippingAddress.city || '',
+                        state: reloaded.customer.shippingAddress.state || '',
+                        pincode: reloaded.customer.shippingAddress.pincode || '',
+                        country: reloaded.customer.shippingAddress.country || ''
+                    };
+                }
             }
-        } : null;
+
+            if ((!fullName || !phoneNumber) && reloaded.address) {
+                const a = reloaded.address;
+                if (!fullName && a.fullName) fullName = a.fullName;
+                if (!phoneNumber && a.phoneNumber) phoneNumber = a.phoneNumber;
+                if (!shippingAddress) {
+                    shippingAddress = {
+                        addressLine1: a.area || a.addressLine1 || '',
+                        city: a.city || '',
+                        state: a.state || '',
+                        pincode: a.pincode || a.pin || '',
+                        country: a.country || ''
+                    };
+                }
+            }
+
+            if ((!fullName || !phoneNumber) && reloaded.address && typeof reloaded.address === 'string') {
+                try {
+                    const parsed = JSON.parse(reloaded.address);
+                    if (parsed && typeof parsed === 'object') {
+                        if (!fullName && parsed.fullName) fullName = parsed.fullName;
+                        if (!phoneNumber && parsed.phoneNumber) phoneNumber = parsed.phoneNumber;
+                        if (!shippingAddress) {
+                            shippingAddress = {
+                                addressLine1: parsed.area || parsed.addressLine1 || '',
+                                city: parsed.city || '',
+                                state: parsed.state || '',
+                                pincode: parsed.pincode || parsed.pin || '',
+                                country: parsed.country || ''
+                            };
+                        }
+                    }
+                } catch (e) {
+                    // ignore
+                }
+            }
+
+            if (!fullName && reloaded.userId) {
+                try {
+                    const key = String(reloaded.userId);
+                    if (usersMap && usersMap[key] && usersMap[key].name) {
+                        fullName = usersMap[key].name;
+                    } else {
+                        const u = await User.findById(reloaded.userId).select('name').lean();
+                        if (u && u.name) fullName = u.name;
+                    }
+                } catch (e) {
+                    // ignore
+                }
+            }
+
+            const customerObj = {
+                fullName: fullName || null,
+                phoneNumber: phoneNumber || null,
+                shippingAddress: shippingAddress || null
+            };
+
+            responseOrder = {
+                ...reloaded,
+                specialRequest: reloaded.specialRequest || '',
+                customer: customerObj
+            };
+        }
 
         // Include updateResult if present for debugging (e.g., when trackingLink was updated above)
         console.log('Order update completed', { orderId, updateResult: typeof updateResult !== 'undefined' ? updateResult : null, timestamp: new Date().toISOString() });

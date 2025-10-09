@@ -90,13 +90,49 @@ const Orders = () => {
                 headers: { Authorization: `Bearer ${token}` },
                 timeout: 15000
             });
-
+            console.debug('seller-orders raw response', data);
                 if (data.success) {
-                const ordersData = Array.isArray(data.orders) ? data.orders : [];
-                setOrders(ordersData);
-                generateSalesReport(ordersData);
-                setLastFetch(new Date().toISOString());
-            } else {
+                    let ordersData = Array.isArray(data.orders) ? data.orders : [];
+
+                    try {
+                        // collect address ids that are still plain strings (24-hex ObjectId-like)
+                        const idLike = /^[a-fA-F0-9]{24}$/;
+                        const ids = ordersData
+                            .map(o => (o && typeof o.address === 'string' ? o.address : (o && o.address && o.address._id ? String(o.address._id) : null)))
+                            .filter(Boolean)
+                            .filter(s => idLike.test(s));
+
+                        if (ids.length > 0) {
+                            const token = await getToken();
+                            const resp = await axios.post('/api/address/batch', { ids }, {
+                                headers: { Authorization: `Bearer ${token}` },
+                                timeout: 10000
+                            });
+                            if (resp?.data?.success && resp.data.addresses) {
+                                const map = resp.data.addresses;
+                                ordersData = ordersData.map(o => {
+                                    try {
+                                        const addrKey = (o && typeof o.address === 'string') ? o.address : (o && o.address && o.address._id ? String(o.address._id) : null);
+                                        if (addrKey && map[addrKey]) {
+                                            return { ...o, address: map[addrKey] };
+                                        }
+                                    } catch (e) {
+                                        // ignore per-order merge errors
+                                    }
+                                    return o;
+                                });
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Failed to batch-resolve addresses for seller orders', e?.message || e);
+                    }
+
+                    setOrders(ordersData);
+                    console.debug('seller-orders first order', ordersData[0]);
+                    if (ordersData[0]) console.debug('computed displayCustomer', getDisplayCustomer(ordersData[0]));
+                    generateSalesReport(ordersData);
+                    setLastFetch(new Date().toISOString());
+                } else {
                 const msg = data.message || "Failed to fetch orders";
                 setFetchError(msg);
                 toast.error(msg);
@@ -511,6 +547,15 @@ const Orders = () => {
         }
     };
 
+    // Normalize a URL: if it lacks http/https, prepend https:// so links open as absolute URLs
+    const normalizeUrl = (u) => {
+        if (!u) return u;
+        const s = String(u).trim();
+        if (!s) return s;
+        if (/^https?:\/\//i.test(s)) return s;
+        return `https://${s}`;
+    };
+
     const getTotalItems = (order) => {
         if (!order?.items) return 0;
         return order.items.reduce((total, item) => total + (item.quantity || 0), 0);
@@ -592,6 +637,46 @@ const Orders = () => {
         const { addressLine1, city, state, pincode, country } = address;
         const formattedAddress = `${addressLine1 || ""}, ${city || ""}, ${state || ""} ${pincode || ""}${country ? ", " + country : ""}`.trim();
         return formattedAddress || "N/A";
+    };
+
+    // Compute a display-friendly customer object for the UI with fallbacks
+    const getDisplayCustomer = (order) => {
+        // Prefer resolved order.address (like My Orders does)
+        if (order?.address) {
+            if (typeof order.address === 'object') {
+                return {
+                    fullName: order.address.fullName || (order?.userId ? `User ${String(order.userId).slice(-8)}` : 'N/A'),
+                    phoneNumber: order.address.phoneNumber || 'N/A',
+                    shippingAddress: {
+                        addressLine1: order.address.area || order.address.addressLine1 || '',
+                        city: order.address.city || '',
+                        state: order.address.state || '',
+                        pincode: order.address.pincode || ''
+                    }
+                };
+            }
+            // string fallback
+            return {
+                fullName: order?.userId ? `User ${String(order.userId).slice(-8)}` : 'N/A',
+                phoneNumber: 'N/A',
+                shippingAddress: { addressLine1: String(order.address), city: '', state: '', pincode: '' }
+            };
+        }
+
+        // Next, prefer server-provided customer if address isn't present
+        const svc = order?.customer || null;
+        if (svc && (svc.fullName || svc.phoneNumber || svc.shippingAddress)) return {
+            fullName: svc.fullName || (order?.userId ? `User ${String(order.userId).slice(-8)}` : 'N/A'),
+            phoneNumber: svc.phoneNumber || 'N/A',
+            shippingAddress: svc.shippingAddress || null
+        };
+
+        // Final fallback: show userId short and no phone/address
+        return {
+            fullName: order?.userId ? `User ${String(order.userId).slice(-8)}` : 'N/A',
+            phoneNumber: 'N/A',
+            shippingAddress: null
+        };
     };
 
     // Helper: when server returns a full order object after an update, merge it into client state
@@ -838,7 +923,7 @@ const Orders = () => {
                                             {!order.invoiceUrl ? (
                                                 <button onClick={() => setInvoiceModalOrder(order)} className="text-sm bg-[#54B1CE] text-white px-3 py-1 rounded">Upload Bill</button>
                                             ) : (
-                                                <a href={order.invoiceUrl} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline">View invoice</a>
+                                                <a href={normalizeUrl(order.invoiceUrl)} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline">View invoice</a>
                                             )}
                                             {order?.specialRequest && (
                                                 <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">Special Request</span>
@@ -1030,9 +1115,12 @@ const Orders = () => {
                                                                 )}
                                                                 <div className="mt-2 flex items-center gap-2">
                                                                     {item.trackingLink ? (
-                                                                        <a href={item.trackingLink} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline">View tracking</a>
+                                                                        <div className="flex items-center gap-2">
+                                                                            <a href={normalizeUrl(item.trackingLink)} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline">View tracking</a>
+                                                                            <button onClick={() => { setTrackingModalOrder(order); setTrackingModalProduct(item); setTrackingInput(item.trackingLink || ''); }} className="text-sm bg-gray-100 px-2 py-1 rounded">Edit</button>
+                                                                        </div>
                                                                     ) : (
-                                                                        <span className="text-sm text-gray-500"> <strong></strong></span>
+                                                                        <button onClick={() => { setTrackingModalOrder(order); setTrackingModalProduct(item); setTrackingInput(''); }} className="text-sm bg-gray-100 px-3 py-1 rounded">Add tracking</button>
                                                                     )}
                                                                 </div>
                                                             </div>
@@ -1060,20 +1148,46 @@ const Orders = () => {
                                         <div>
                                             <h4 className="font-medium mb-2">Customer Information</h4>
                                             <div className="space-y-2 p-2 bg-gray-50 rounded">
-                                                <p><strong>Name:</strong> {order.customer?.fullName || "N/A"}</p>
-                                                <p><strong>Phone Number:</strong> {order.customer?.phoneNumber || "N/A"}</p>
-                                                <p><strong>Shipping Address:</strong> {formatShippingAddress(order.customer?.shippingAddress)}</p>
-                                                {order.customer?.fullName === "N/A" && order.customer?.phoneNumber === "N/A" && formatShippingAddress(order.customer?.shippingAddress) === "N/A" && (
-                                                    <p className="text-red-600 text-xs">Customer data unavailable. Contact support.</p>
-                                                )}
+                                                {(() => {
+                                                    const displayCustomer = getDisplayCustomer(order);
+                                                    const formattedAddress = formatShippingAddress(displayCustomer.shippingAddress);
+                                                    return (
+                                                        <>
+                                                            <p><strong>Name:</strong> {displayCustomer.fullName || "N/A"}</p>
+                                                            <p><strong>Phone Number:</strong> {displayCustomer.phoneNumber || "N/A"}</p>
+                                                            <p><strong>Shipping Address:</strong> {formattedAddress}</p>
+                                                            {displayCustomer.fullName === "N/A" && displayCustomer.phoneNumber === "N/A" && formattedAddress === "N/A" && (
+                                                                <p className="text-red-600 text-xs">Customer data unavailable. Contact support.</p>
+                                                            )}
+                                                        </>
+                                                    )
+                                                })()}
                                             </div>
                                             {/* Invoice area */}
-                                            <div className="mt-3">
+                                            <div className="mt-3 flex items-center gap-2">
                                                 {order.invoiceUrl ? (
-                                                    <a href={order.invoiceUrl} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline">View invoice</a>
+                                                    <>
+                                                        <a href={order.invoiceUrl} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline">View bill</a>
+                                                        <button onClick={async () => {
+                                                            try {
+                                                                const token = await getToken();
+                                                                const { data } = await axios.post('/api/order/delete-invoice', { orderId: order._id }, { headers: { Authorization: `Bearer ${token}` } });
+                                                                if (data.success) {
+                                                                    setOrders(prev => prev.map(o => o._id === order._id ? { ...o, invoiceUrl: '', invoiceUrlCloud: '' } : o));
+                                                                    toast.success('Bill deleted');
+                                                                } else {
+                                                                    toast.error(data.message || 'Failed to delete bill');
+                                                                }
+                                                            } catch (e) {
+                                                                console.error('delete bill error', e);
+                                                                toast.error(e?.response?.data?.message || 'Failed to delete bill');
+                                                            }
+                                                        }} className="text-sm bg-red-100 text-red-600 px-2 py-1 rounded">Delete bill</button>
+                                                    </>
                                                 ) : (
-                                                    <button onClick={() => setInvoiceModalOrder(order)} className="text-sm bg-gray-100 px-3 py-1 rounded">Upload invoice (PDF)</button>
+                                                    <button onClick={() => setInvoiceModalOrder(order)} className="text-sm bg-[#54B1CE] text-white px-3 py-1 rounded">Upload Bill</button>
                                                 )}
+                                                {/* <button onClick={() => { setTrackingModalOrder(order); setTrackingModalProduct(null); setTrackingInput(order.trackingLink || ''); }} className="text-sm bg-gray-100 px-3 py-1 rounded">Add tracking link</button> */}
                                             </div>
                                         </div>
                                     </div>
@@ -1207,24 +1321,31 @@ const Orders = () => {
             )}
 
             {/* Tracking Modal */}
-            {trackingModalOrder && trackingModalProduct && (
+            {trackingModalOrder && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-lg max-w-md w-full p-6">
                         <h3 className="text-lg font-semibold mb-4">Add / Edit Tracking Link</h3>
-                        <p className="text-sm text-gray-600 mb-3">Product: {trackingModalProduct.product?.name || trackingModalProduct.product}</p>
+                        {trackingModalProduct ? (
+                            <p className="text-sm text-gray-600 mb-3">Product: {trackingModalProduct.product?.name || trackingModalProduct.product}</p>
+                        ) : (
+                            <p className="text-sm text-gray-600 mb-3">Order-level tracking link</p>
+                        )}
                         <input type="text" value={trackingInput} onChange={(e) => setTrackingInput(e.target.value)} placeholder="Enter tracking URL" className="w-full border p-2 rounded mb-4" />
                         <div className="flex gap-3">
                             <button onClick={async () => {
                                 try {
                                     setLoading(true);
                                     const token = await getToken();
-                                    const { data } = await axios.put('/api/order/seller-orders', {
+                                    const payload = trackingModalProduct ? {
                                         orderId: trackingModalOrder._id,
                                         trackingLink: trackingInput,
                                         productId: trackingModalProduct.product?._id || trackingModalProduct.product
-                                    }, {
-                                        headers: { Authorization: `Bearer ${token}` }
-                                    });
+                                    } : {
+                                        orderId: trackingModalOrder._id,
+                                        orderTrackingLink: trackingInput
+                                    };
+
+                                    const { data } = await axios.put('/api/order/seller-orders', payload, { headers: { Authorization: `Bearer ${token}` } });
 
                                             console.debug('saveTracking response', data);
                                             if (data.success) {
@@ -1239,13 +1360,13 @@ const Orders = () => {
                                                     const ur = data.updateResult;
                                                     const matched = ur.matchedCount ?? ur.n ?? ur.nMatched ?? 0;
                                                     const modified = ur.modifiedCount ?? ur.nModified ?? 0;
-                                                    toast.success(`Tracking saved (matched: ${matched}, modified: ${modified})`);
+                                                        toast.success(`${trackingModalProduct ? 'Tracking saved' : 'Order tracking saved'} (matched: ${matched}, modified: ${modified})`);
                                                 } else {
-                                                    toast.success('Tracking link saved');
+                                                        toast.success(trackingModalProduct ? 'Tracking link saved' : 'Order tracking saved');
                                                 }
                                             } else {
                                                 const debug = data.debug ? JSON.stringify(data.debug) : null;
-                                                toast.error((data.message || 'Failed to save tracking') + (debug ? ` - ${debug}` : ''));
+                                                    toast.error((data.message || (trackingModalProduct ? 'Failed to save tracking' : 'Failed to save order tracking')) + (debug ? ` - ${debug}` : ''));
                                             }
                                 } catch (err) {
                                     console.error('save tracking error', err);
@@ -1267,8 +1388,8 @@ const Orders = () => {
             {invoiceModalOrder && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-lg max-w-md w-full p-6">
-                        <h3 className="text-lg font-semibold mb-4">Upload Invoice (PDF)</h3>
-                        <input type="file" accept="application/pdf" onChange={(e) => setInvoiceFile(e.target.files?.[0] || null)} />
+                        <h3 className="text-lg font-semibold mb-4">Upload Invoice (Image)</h3>
+                        <input type="file" accept="image/*" onChange={(e) => setInvoiceFile(e.target.files?.[0] || null)} />
                         <div className="flex gap-3 mt-4">
                             <button onClick={async () => {
                                 if (!invoiceFile) { toast.error('Please choose a PDF file'); return; }
@@ -1283,13 +1404,14 @@ const Orders = () => {
                                         reader.readAsDataURL(invoiceFile);
                                     });
                                     const { data } = await axios.post('/api/order/upload-invoice', { orderId: invoiceModalOrder._id, fileBase64: b64 }, { headers: { Authorization: `Bearer ${token}` } });
-                                    if (data.success) {
-                                        // update local order with returned URL
-                                        setOrders(prev => prev.map(o => o._id === invoiceModalOrder._id ? { ...o, invoiceUrl: data.url } : o));
-                                        toast.success('Invoice uploaded');
-                                    } else {
-                                        toast.error(data.message || 'Failed to upload invoice');
-                                    }
+                                            if (data.success) {
+                                                // update local order with returned cloud URL
+                                                const cloud = data.cloudUrl || data.url || '';
+                                                setOrders(prev => prev.map(o => o._id === invoiceModalOrder._id ? { ...o, invoiceUrl: cloud, invoiceUrlCloud: cloud } : o));
+                                                toast.success("Bill uploaded");
+                                            } else {
+                                                toast.error(data.message || "Failed to upload bill");
+                                            }
                                 } catch (err) {
                                     console.error('upload invoice error', err);
                                     toast.error(err?.response?.data?.message || 'Failed to upload invoice');
