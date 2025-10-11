@@ -25,7 +25,7 @@ const AllProducts = () => {
         'Cables and Chargers',
         'Battery',
         'Selfie Sticks',
-        'Gift and Crockery Items',
+        'Gift and crockery item',
         'Speaker'
     ];
 
