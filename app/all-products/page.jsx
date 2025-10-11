@@ -20,15 +20,13 @@ const AllProducts = () => {
     const categories = [
         'all',
         'Handsfree',
-        'Earbuds', 
+        'Earbuds',
         'Mix Items',
-        'Car Bluetooth',
-        'OTG Cables',
-        'Car Chargers',
         'Cables and Chargers',
         'Battery',
         'Selfie Sticks',
-        'Car and Bike Stand'
+        'Gift and Crockery Items',
+        'Speaker'
     ];
 
     // Get min and max price for range slider

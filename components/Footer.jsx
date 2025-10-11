@@ -50,9 +50,35 @@ const Footer = () => {
           {/* Contact */}
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-3">Contact</h3>
-            <p className="text-sm text-gray-600">📞 +91-98765-43210</p>
+            <p className="text-sm text-gray-600">📞 +91 9911847155</p>
+            <p className="text-sm text-gray-600">📞 +91 92898 38929</p>
             <p className="text-sm text-gray-600">✉️ support@ssj.com</p>
-            <p className="text-sm text-gray-600">📍 Chandigarh, Punjab, India</p>
+
+            <div className="flex items-center gap-2 mt-2">
+              {/* Inline SVG for map icon */}
+              <a
+                href="https://maps.app.goo.gl/wN9Ccd86izmTvJFG6"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-sm text-gray-600 hover:text-blue-600"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-gray-600"
+                >
+                  <path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0Z" />
+                  <circle cx="12" cy="10" r="3" />
+                </svg>
+                Rohtak, Haryana, India
+              </a>
+            </div>
           </div>
         </div>
 

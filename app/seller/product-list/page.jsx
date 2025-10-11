@@ -538,13 +538,11 @@ const ProductList = () => {
                       <option value="Handsfree" />
                       <option value="Earbuds" />
                       <option value="Mix Items" />
-                      <option value="Car Bluetooth" />
-                      <option value="OTG Cables" />
-                      <option value="Car Chargers" />
                       <option value="Cables and Chargers" />
                       <option value="Battery" />
                       <option value="Selfie Sticks" />
-                      <option value="Car and Bike Stand" />
+                      <option value="Gift and Crockery Items" />
+                      <option value="Speaker" />
                       <option value="Other" />
                     </datalist>
                     {editForm.category === 'Other' && (

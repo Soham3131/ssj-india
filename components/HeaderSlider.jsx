@@ -35,56 +35,14 @@ const HeaderSlider = () => {
 
   // Your 10 categories with Pexels images
   const categories = [
-    {
-      id: 1,
-      name: "Handsfree",
-      image: "https://www.geeky-gadgets.com/wp-content/uploads/2014/05/earpods.jpg"
-    },
-    {
-      id: 2,
-      name: "Earbuds",
-      image: "https://i.pinimg.com/736x/e2/7c/89/e27c89722b03c92d0e2fef16fbc29863.jpg"
-    },
-    {
-      id: 3,
-      name: "Mix Items",
-      image: "https://img.freepik.com/free-photo/close-up-artist-making-music_23-2149199987.jpg?semt=ais_hybrid&w=740&q=80"
-    },
-    {
-      id: 4,
-      name: "Car Bluetooth",
-      image: "https://www.jiomart.com/images/product/original/rvhadyiwd4/crust-cs30-car-bluetooth-device-with-call-receiver-fm-transmitter-for-music-system-dual-usb-type-c-fast-charger-7-colour-led-lights-6-equalizer-presets-usb-mp3-audio-playback-voice-assistant-legal-images-orvhadyiwd4-p601894899-3-202305271549.jpg?im=Resize=(420,420)"
-    },
-    {
-      id: 5,
-      name: "OTG Cables",
-      image: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQnZ6SuUmqu0wa4nB7KHsI9Al7eh3RvMkJHog&s"
-    },
-    {
-      id: 6,
-      name: "Car Chargers",
-      image: "https://images.philips.com/is/image/philipsconsumer/0b370bab54c442dfa0bdb0c100abfa7a?$pnglarge$&wid=1250"
-    },
-    {
-      id: 7,
-      name: "Cables and Chargers",
-      image: "https://chargingcable.in/cdn/shop/files/1_b5035f15-621e-49aa-843d-ae9ea35a5402_1.jpg?v=1748060807&width=1080"
-    },
-    {
-      id: 8,
-      name: "Battery",
-      image: "https://www.popsci.com/wp-content/uploads/2020/03/23/hands-holding-phone-with-dead-battery-advisory.jpg?quality=85"
-    },
-    {
-      id: 9,
-      name: "Selfie Sticks",
-      image: "https://cdn.sanity.io/images/3azemr64/production/0af7b94e8cea2b42968c16720a3ab9011c2d3f58-1024x768.jpg?auto=format&w=873&h=655&crop=center&fit=crop&q=90"
-    },
-    {
-      id: 10,
-      name: "Car and Bike Stand",
-      image: "https://holdfast.co.za/wp-content/uploads/2024/11/Versa-Bike-Stand_Holdfast_Oct24_Boulle_1.jpg"
-    }
+    { id: 1, name: 'Handsfree', image: 'https://www.geeky-gadgets.com/wp-content/uploads/2014/05/earpods.jpg' },
+    { id: 2, name: 'Earbuds', image: 'https://i.pinimg.com/736x/e2/7c/89/e27c89722b03c92d0e2fef16fbc29863.jpg' },
+    { id: 3, name: 'Mix Items', image: 'https://img.freepik.com/free-photo/close-up-artist-making-music_23-2149199987.jpg?semt=ais_hybrid&w=740&q=80' },
+    { id: 4, name: 'Cables and Chargers', image: 'https://chargingcable.in/cdn/shop/files/1_b5035f15-621e-49aa-843d-ae9ea35a5402_1.jpg?v=1748060807&width=1080' },
+    { id: 5, name: 'Battery', image: 'https://www.popsci.com/wp-content/uploads/2020/03/23/hands-holding-phone-with-dead-battery-advisory.jpg?quality=85' },
+    { id: 6, name: 'Selfie Sticks', image: 'https://cdn.sanity.io/images/3azemr64/production/0af7b94e8cea2b42968c16720a3ab9011c2d3f58-1024x768.jpg?auto=format&w=873&h=655&crop=center&fit=crop&q=90' },
+    { id: 7, name: 'Gift and Crockery Items', image: 'https://images.pexels.com/photos/7764402/pexels-photo-7764402.jpeg' },
+    { id: 8, name: 'Speaker', image: 'https://images.pexels.com/photos/4295360/pexels-photo-4295360.png' }
   ];
 
   const [currentSlide, setCurrentSlide] = useState(0);

@@ -9,10 +9,12 @@ import { useParams } from "next/navigation";
 import Loading from "@/components/Loading";
 import { useAppContext } from "@/context/AppContext";
 import React from "react";
+import { useUser } from "@clerk/nextjs";
 
 const Product = () => {
   const { id } = useParams();
-  const { products, router, addToCart, user, cartItems } = useAppContext();
+  const { products, router, addToCart, cartItems } = useAppContext();
+  const { isSignedIn } = useUser();
   const [mainImage, setMainImage] = useState(null);
   const [productData, setProductData] = useState(null);
   const [selectedOptions, setSelectedOptions] = useState({});
@@ -164,6 +166,26 @@ const Product = () => {
   }
 
   const canAddToCart = !isOutOfStock && isColorSelectionSatisfied();
+
+  // Simple handlers - agar user login nahi hai toh show message
+  const handleAddToCart = () => {
+    if (!isSignedIn) {
+      alert("Please login to add items to cart. Click on the account icon in navbar to login.");
+      return;
+    }
+    if (!isColorSelectionSatisfied()) return;
+    addToCart(productData._id, selectedOptions);
+  };
+
+  const handleBuyNow = () => {
+    if (!isSignedIn) {
+      alert("Please login to buy now. Click on the account icon in navbar to login.");
+      return;
+    }
+    if (!isColorSelectionSatisfied()) return;
+    addToCart(productData._id, selectedOptions);
+    router.push("/cart");
+  };
 
   if (!productData) return <Loading />;
 
@@ -369,30 +391,23 @@ const Product = () => {
             {/* Action Buttons */}
             <div className="flex flex-col md:flex-row gap-4 mt-4">
               <button
-                onClick={() => {
-                  // Prevent adding when color selection isn't satisfied
-                  if (!isColorSelectionSatisfied()) return;
-                    addToCart(productData._id, selectedOptions);
-                }}
+                onClick={handleAddToCart}
                 className={`flex-1 py-3.5 rounded-lg font-medium transition ${
                   (!canAddToCart || isOutOfStock) ? "bg-gray-300 text-gray-500 cursor-not-allowed" : "bg-gray-100 hover:bg-gray-200 text-gray-800"
                 }`}
-                disabled={!canAddToCart || isOutOfStock}
+                disabled={(!canAddToCart || isOutOfStock) && isSignedIn}
               >
-                {!canAddToCart || isOutOfStock ? "Cannot add to cart" : (productData.minBuy && Number(productData.minBuy) > 1 ? `Add to Cart (Min ${productData.minBuy})` : "Add to Cart")}
+                {!isSignedIn ? "Login to Add to Cart" : 
+                 (!canAddToCart || isOutOfStock) ? "Cannot add to cart" : 
+                 (productData.minBuy && Number(productData.minBuy) > 1 ? `Add to Cart (Min ${productData.minBuy})` : "Add to Cart")}
               </button>
 
               <button
-                onClick={() => {
-                  // Prevent buying when color selection isn't satisfied
-                  if (!isColorSelectionSatisfied()) return;
-                  addToCart(productData._id, selectedOptions);
-                  user ? router.push("/cart") : router.push("/sign-in");
-                }}
+                onClick={handleBuyNow}
                 className={`flex-1 py-3.5 rounded-lg font-medium transition ${(!canAddToCart || isOutOfStock) ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-[#54B1CE] text-white hover:bg-[#3b8bbd]'}`}
-                disabled={!canAddToCart || isOutOfStock}
+                disabled={(!canAddToCart || isOutOfStock) && isSignedIn}
               >
-                Buy Now
+                {!isSignedIn ? "Login to Buy Now" : "Buy Now"}
               </button>
             </div>
 

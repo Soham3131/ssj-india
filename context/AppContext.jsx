@@ -1,4 +1,3 @@
-// context/AppContext.js
 'use client';
 import { useAuth, useUser } from "@clerk/nextjs";
 import axios from "axios";
@@ -86,7 +85,8 @@ export const AppContextProvider = (props) => {
   // New signature: addToCart(itemId, variantSelection)
   const addToCart = async (itemId, variantSelection = null) => {
     if (!user) {
-      return toast('Please login', { icon: '⚠️' });
+      toast('Please login to add items to cart', { icon: '⚠️' });
+      return;
     }
     let cartData = structuredClone(cartItems);
     // Respect product's minimum buy quantity (minBuy)
@@ -97,7 +97,8 @@ export const AppContextProvider = (props) => {
       if (product.colors && product.colors.length > 0) {
         // require selection of a product-level color stored under _productColor (may be an object)
         if (!variantSelection._productColor && !(variantSelection._productColor && variantSelection._productColor.label)) {
-          return toast('Please select a product color before adding to cart', { icon: '⚠️' });
+          toast('Please select a product color before adding to cart', { icon: '⚠️' });
+          return;
         }
       }
       // Variant-level color selections are no longer required — sellers/clients should not add per-option colors
