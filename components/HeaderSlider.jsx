@@ -41,7 +41,7 @@ const HeaderSlider = () => {
     { id: 4, name: 'Cables and Chargers', image: 'https://chargingcable.in/cdn/shop/files/1_b5035f15-621e-49aa-843d-ae9ea35a5402_1.jpg?v=1748060807&width=1080' },
     { id: 5, name: 'Battery', image: 'https://www.popsci.com/wp-content/uploads/2020/03/23/hands-holding-phone-with-dead-battery-advisory.jpg?quality=85' },
     { id: 6, name: 'Selfie Sticks', image: 'https://cdn.sanity.io/images/3azemr64/production/0af7b94e8cea2b42968c16720a3ab9011c2d3f58-1024x768.jpg?auto=format&w=873&h=655&crop=center&fit=crop&q=90' },
-    { id: 7, name: 'Gift and Crockery Items', image: 'https://images.pexels.com/photos/7764402/pexels-photo-7764402.jpeg' },
+    { id: 7, name: 'Gift and crockery item', image: 'https://images.pexels.com/photos/7764402/pexels-photo-7764402.jpeg' },
     { id: 8, name: 'Speaker', image: 'https://images.pexels.com/photos/4295360/pexels-photo-4295360.png' }
   ];
 

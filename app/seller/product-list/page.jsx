@@ -541,7 +541,7 @@ const ProductList = () => {
                       <option value="Cables and Chargers" />
                       <option value="Battery" />
                       <option value="Selfie Sticks" />
-                      <option value="Gift and Crockery Items" />
+                      <option value="Gift and crockery item" />
                       <option value="Speaker" />
                       <option value="Other" />
                     </datalist>

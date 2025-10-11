@@ -39,7 +39,7 @@ const AddProduct = () => {
 
   const getCategories = () => {
     if (!brand || brand === 'Other') return [];
-    return ['Handsfree', 'Earbuds', 'Mix Items', 'Cables and Chargers', 'Battery', 'Selfie Sticks', 'Gift and Crockery Items', 'Speaker'];
+    return ['Handsfree', 'Earbuds', 'Mix Items', 'Cables and Chargers', 'Battery', 'Selfie Sticks', 'Gift and crockery item', 'Speaker'];
   };
 
   const getSubcategories = () => {
